@@ -39,7 +39,10 @@ endif()
 set(ENABLE_CLANG_TIDY OFF)
 set(ENABLE_CPPCHECK OFF)
 set(ENABLE_COVERAGE OFF)
-add_subdirectory(libs/veng)
+# SYSTEM marks veng's interface include dirs as -isystem for geng's targets, so geng's own
+# -Wall/-Werror, clang-tidy, and cppcheck don't analyse veng's headers when they're pulled into
+# geng translation units (the tooling above only spares veng's *own* compilation).
+add_subdirectory(libs/veng SYSTEM)
 unset(ENABLE_CLANG_TIDY)
 unset(ENABLE_CPPCHECK)
 unset(ENABLE_COVERAGE)
