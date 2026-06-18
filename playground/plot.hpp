@@ -96,44 +96,117 @@ inline geng::Bounds2D fit_bounds(const std::vector<glm::vec2>& points)
 		.min_x = min_x - pad_x, .max_x = max_x + pad_x, .min_y = min_y - pad_y, .max_y = max_y + pad_y};
 }
 
-/// Endpoint list (two `float2` per segment) for the plot's line-LIST: the coordinate axes through
-/// the origin (spanning @p box) first, then the @p curve polyline expanded into independent
-/// segments. Axes come first so the curve, drawn on later instances, layers over them.
-inline std::vector<glm::vec2> build_positions(const std::vector<glm::vec2>& curve, const geng::Bounds2D& box)
+/// A "nice" tick step (1, 2 or 5 x 10^k) for @p range, aiming for roughly @p target divisions.
+inline float nice_step(float range, int target)
 {
-	const std::size_t curve_segments = curve.size() > 1U ? curve.size() - 1U : 0U;
-
-	std::vector<glm::vec2> positions;
-	positions.reserve(2U * (2U + curve_segments)); // two endpoints per segment
-	positions.emplace_back(box.min_x, 0.0F);	   // x-axis (y = 0)
-	positions.emplace_back(box.max_x, 0.0F);
-	positions.emplace_back(0.0F, box.min_y); // y-axis (x = 0)
-	positions.emplace_back(0.0F, box.max_y);
-	for (std::size_t idx = 1; idx < curve.size(); ++idx)
+	if (range <= 0.0F || target <= 0)
 	{
-		positions.push_back(curve.at(idx - 1U));
-		positions.push_back(curve.at(idx));
+		return 1.0F;
 	}
-	return positions;
+	const float raw	 = range / static_cast<float>(target);
+	const float mag	 = std::pow(10.0F, std::floor(std::log10(raw)));
+	const float norm = raw / mag;
+	float		step = 10.0F;
+	if (norm < 1.5F)
+	{
+		step = 1.0F;
+	}
+	else if (norm < 3.0F)
+	{
+		step = 2.0F;
+	}
+	else if (norm < 7.0F)
+	{
+		step = 5.0F;
+	}
+	return step * mag;
 }
 
-/// Per-segment colours, indexed in lockstep with @ref build_positions: the two axis segments
-/// (dim grey) followed by one curve colour (cyan) per curve segment.
-inline std::vector<glm::vec4> build_colors(const std::vector<glm::vec2>& curve)
+/// Tick values covering [@p lo, @p hi] at @p step, ascending.
+inline std::vector<float> axis_ticks(float lo, float hi, float step)
 {
-	const glm::vec4	  axis_color{0.40F, 0.42F, 0.50F, 1.0F};
-	const glm::vec4	  curve_color{0.30F, 0.80F, 1.00F, 1.0F};
-	const std::size_t curve_segments = curve.size() > 1U ? curve.size() - 1U : 0U;
-
-	std::vector<glm::vec4> colors;
-	colors.reserve(2U + curve_segments);
-	colors.push_back(axis_color); // x-axis
-	colors.push_back(axis_color); // y-axis
-	for (std::size_t idx = 0; idx < curve_segments; ++idx)
+	std::vector<float> ticks;
+	if (step <= 0.0F)
 	{
-		colors.push_back(curve_color);
+		return ticks;
 	}
-	return colors;
+	const float first = std::ceil(lo / step) * step;
+	for (std::size_t idx = 0; idx < 1000U; ++idx)
+	{
+		const float val = first + (static_cast<float>(idx) * step);
+		if (val > hi)
+		{
+			break;
+		}
+		ticks.push_back(val);
+	}
+	return ticks;
+}
+
+/// Grid tick positions on each axis for @p box, at "nice" steps.
+struct GridTicks
+{
+	std::vector<float> xs;
+	std::vector<float> ys;
+};
+
+inline GridTicks grid_ticks(const geng::Bounds2D& box)
+{
+	constexpr int TARGET = 6;
+	return GridTicks{.xs = axis_ticks(box.min_x, box.max_x, nice_step(box.max_x - box.min_x, TARGET)),
+					 .ys = axis_ticks(box.min_y, box.max_y, nice_step(box.max_y - box.min_y, TARGET))};
+}
+
+/// A line-LIST: two endpoints per segment in @ref positions, one colour per segment in @ref colors.
+struct Segments
+{
+	std::vector<glm::vec2> positions;
+	std::vector<glm::vec4> colors;
+
+	friend bool operator==(const Segments&, const Segments&) = default;
+};
+
+inline void add_segment(Segments& out, glm::vec2 start, glm::vec2 end, const glm::vec4& color)
+{
+	out.positions.push_back(start);
+	out.positions.push_back(end);
+	out.colors.push_back(color);
+}
+
+/// Build the plot's whole line-LIST, back to front so painter order layers it correctly: faint
+/// grid, then grey coordinate axes, then the cyan curve expanded segment-by-segment on top.
+inline Segments build_segments(const std::vector<glm::vec2>& curve, const geng::Bounds2D& box)
+{
+	const glm::vec4 grid_color{0.16F, 0.17F, 0.22F, 1.0F};
+	const glm::vec4 axis_color{0.40F, 0.42F, 0.50F, 1.0F};
+	const glm::vec4 curve_color{0.30F, 0.80F, 1.00F, 1.0F};
+
+	Segments		out;
+	const GridTicks ticks = grid_ticks(box);
+	// Grid lines, skipping x=0 / y=0 — the brighter axes draw those.
+	for (const float tick_x : ticks.xs)
+	{
+		if (std::abs(tick_x) >= 1e-4F)
+		{
+			add_segment(out, {tick_x, box.min_y}, {tick_x, box.max_y}, grid_color);
+		}
+	}
+	for (const float tick_y : ticks.ys)
+	{
+		if (std::abs(tick_y) >= 1e-4F)
+		{
+			add_segment(out, {box.min_x, tick_y}, {box.max_x, tick_y}, grid_color);
+		}
+	}
+	// Coordinate axes through the origin, over the grid.
+	add_segment(out, {box.min_x, 0.0F}, {box.max_x, 0.0F}, axis_color); // x-axis
+	add_segment(out, {0.0F, box.min_y}, {0.0F, box.max_y}, axis_color); // y-axis
+	// The curve, polyline expanded into independent segments, on top.
+	for (std::size_t idx = 1; idx < curve.size(); ++idx)
+	{
+		add_segment(out, curve.at(idx - 1U), curve.at(idx), curve_color);
+	}
+	return out;
 }
 
 /// Wire a single sin(x) curve and its coordinate axes into @p graph as a raster cache, producing
@@ -149,11 +222,11 @@ inline void plot_sin(veng::graph::Graph& graph, veng::graph::TypedHandle<veng::r
 	// Reactive data box, projection and line-list (axes + curve), all derived from the curve.
 	const auto box		 = graph.add_transform([](const std::vector<glm::vec2>& pts) { return fit_bounds(pts); }, curve_src);
 	const auto view_proj = graph.add_transform([](const geng::Bounds2D& bnd) { return geng::ortho_view(bnd); }, box);
-	const auto positions = graph.add_transform(
-		[](const std::vector<glm::vec2>& pts, const geng::Bounds2D& bnd) { return build_positions(pts, bnd); }, curve_src,
-		box);
-	const auto seg_colors =
-		graph.add_transform([](const std::vector<glm::vec2>& pts) { return build_colors(pts); }, curve_src);
+	const auto segments	 = graph.add_transform(
+		 [](const std::vector<glm::vec2>& pts, const geng::Bounds2D& bnd) { return build_segments(pts, bnd); }, curve_src,
+		 box);
+	const auto positions  = graph.add_transform([](const Segments& seg) { return seg.positions; }, segments);
+	const auto seg_colors = graph.add_transform([](const Segments& seg) { return seg.colors; }, segments);
 
 	// Upload the two line-list buffers (positions + per-segment colours) the bake shader indexes.
 	const DataHandle positions_ref = graph.add(std::make_unique<ValueData<gpu::BufferRef>>(gpu::BufferRef{}));
