@@ -6,6 +6,8 @@
 
 #include <vulkan/vulkan.h>
 
+#include <veng/rhi/Enums.hpp>
+
 struct GLFWwindow;
 
 namespace geng
@@ -31,7 +33,7 @@ class Window
 	static void		   poll() noexcept;
 
 	/// The framebuffer size in pixels (may differ from the requested window size on HiDPI).
-	[[nodiscard]] VkExtent2D framebuffer_extent() const noexcept;
+	[[nodiscard]] veng::rhi::Extent2D framebuffer_extent() const noexcept;
 
 	/// Instance extensions required for a window surface (`VK_KHR_surface` + the platform
 	/// surface extension), with a known-good fallback when GLFW's own query comes up empty.

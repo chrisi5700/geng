@@ -12,6 +12,10 @@ struct Bounds2D
 	float max_x;
 	float min_y;
 	float max_y;
+
+	/// Value equality so a reactive graph edge carrying a `Bounds2D` can memoize: a recomputed
+	/// bound equal to the cached one stops propagation (no needless re-bake / re-projection).
+	friend bool operator==(const Bounds2D&, const Bounds2D&) noexcept = default;
 };
 
 /// Build the data-space → Vulkan-clip-space transform that maps @p bounds onto the full clip

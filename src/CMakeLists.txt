@@ -10,7 +10,7 @@
 find_package(glm CONFIG REQUIRED)
 
 target_add_library(geng)
-target_sources(geng PRIVATE Bounds2D.cpp Window.cpp Renderer.cpp)
+target_sources(geng PRIVATE Bounds2D.cpp Window.cpp Renderer.cpp OffscreenRenderer.cpp)
 target_include_directories(geng PUBLIC ${CMAKE_SOURCE_DIR}/include)
 target_compile_definitions(geng PUBLIC GLM_FORCE_DEPTH_ZERO_TO_ONE)
 target_compile_definitions(geng PRIVATE GENG_SHADER_DIR="${CMAKE_SOURCE_DIR}/shaders")

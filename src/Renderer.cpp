@@ -17,7 +17,6 @@
 #include <veng/nodes/PresentNode.hpp>
 #include <veng/rendergraph/data/Data.hpp>
 #include <veng/resources/ResourcePool.hpp>
-#include <veng/rhi/Convert.hpp>
 
 namespace geng
 {
@@ -49,11 +48,11 @@ Renderer::Renderer(const char* title, int width, int height)
 
 	m_pool	   = std::make_unique<veng::ResourcePool>(m_ctx->device(), m_ctx->rhi(), m_ctx->allocator(), FRAMES_IN_FLIGHT);
 	m_commands = std::make_unique<veng::CommandManager>(*m_ctx);
-	m_scene_color_format = veng::rhi::to_rhi(m_swap->format());
+	m_scene_color_format = m_swap->format();
 
 	using namespace veng::graph;
 
-	m_screen		  = m_graph.add_source<veng::rhi::Extent2D>(veng::rhi::to_rhi(m_swap->extent()));
+	m_screen		  = m_graph.add_source<veng::rhi::Extent2D>(m_swap->extent());
 	m_swapchain_image = m_graph.add_source<veng::gpu::ImageRef>(veng::gpu::ImageRef{});
 	m_scene_image	  = m_graph.add(std::make_unique<ValueData<veng::gpu::ImageRef>>(veng::gpu::ImageRef{}));
 	m_presented_image = m_graph.add(std::make_unique<ValueData<veng::gpu::ImageRef>>(veng::gpu::ImageRef{}));
@@ -80,7 +79,7 @@ Renderer::~Renderer()
 	}
 }
 
-void Renderer::rebuild_swapchain(vk::Extent2D extent)
+void Renderer::rebuild_swapchain(veng::rhi::Extent2D extent)
 {
 	(void)m_ctx->device().waitIdle();
 	if (!m_swap->rebuild(extent).has_value())
@@ -88,7 +87,7 @@ void Renderer::rebuild_swapchain(vk::Extent2D extent)
 		return;
 	}
 	const std::scoped_lock lock(m_graph_mutex);
-	m_graph.set(m_screen, veng::rhi::to_rhi(m_swap->extent()));
+	m_graph.set(m_screen, m_swap->extent());
 }
 
 void Renderer::run()
@@ -97,7 +96,7 @@ void Renderer::run()
 	{
 		Window::poll();
 
-		const vk::Extent2D fb_extent = m_window.framebuffer_extent();
+		const veng::rhi::Extent2D fb_extent = m_window.framebuffer_extent();
 		if (fb_extent.width == 0 || fb_extent.height == 0)
 		{
 			std::this_thread::sleep_for(std::chrono::milliseconds(10));

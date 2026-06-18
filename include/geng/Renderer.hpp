@@ -62,7 +62,7 @@ class Renderer
 	void run();
 
 	 private:
-	void rebuild_swapchain(vk::Extent2D extent);
+	void rebuild_swapchain(veng::rhi::Extent2D extent);
 
 	Window								  m_window;
 	std::unique_ptr<veng::Context>		  m_ctx;

@@ -82,12 +82,13 @@ void Window::poll() noexcept
 	glfwPollEvents();
 }
 
-VkExtent2D Window::framebuffer_extent() const noexcept
+veng::rhi::Extent2D Window::framebuffer_extent() const noexcept
 {
 	int width  = 0;
 	int height = 0;
 	glfwGetFramebufferSize(m_window, &width, &height);
-	return VkExtent2D{.width = static_cast<std::uint32_t>(width), .height = static_cast<std::uint32_t>(height)};
+	return veng::rhi::Extent2D{.width  = static_cast<std::uint32_t>(width),
+							   .height = static_cast<std::uint32_t>(height)};
 }
 
 VkSurfaceKHR Window::create_surface(VkInstance instance) const noexcept
