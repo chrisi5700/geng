@@ -1,8 +1,14 @@
-// geng — flat-colour fill for the line quads. The colour is fixed for this first slice; it
-// becomes a per-curve uniform/push constant once the public API takes shape.
+// geng — per-segment colour fill for the line quads. The colour is carried from the vertex shader
+// (looked up per segment from the `colors` buffer), so the coordinate axes and the curve share one
+// pipeline and one draw while keeping distinct colours.
+
+struct PSIn
+{
+    [[vk::location(0)]] float4 color : COLOR0;
+};
 
 [shader("fragment")]
-float4 main() : SV_Target
+float4 main(PSIn input) : SV_Target
 {
-    return float4(0.30, 0.80, 1.0, 1.0); // cyan
+    return input.color;
 }

@@ -1,15 +1,19 @@
-// geng — thin-quad polyline expansion, done entirely in the vertex shader (no GPU line
-// primitive, so it is safe on older hardware that lacks reliable wide-line support).
+// geng — thin-quad line rendering, done entirely in the vertex shader (no GPU line primitive, so
+// it is safe on older hardware that lacks reliable wide-line support).
 //
-// The polyline's points live in a StructuredBuffer. The draw is instanced: one *segment* per
-// instance (SV_InstanceID), each drawn as 6 SV_VertexID vertices = two triangles = one quad.
-// There is no vertex buffer — the geometry is fabricated from the two builtins alone.
+// Line-LIST: the draw is instanced, one *segment* per instance (SV_InstanceID). A segment is two
+// independent endpoints — positions[2*seg] and positions[2*seg + 1] — drawn as 6 SV_VertexID
+// vertices = two triangles = one quad. There is no vertex buffer; the geometry is fabricated from
+// the two builtins alone. A parallel `colors` buffer gives each segment its own colour, so the
+// coordinate axes (one colour) and the curve (another) share a single buffer, draw and pass —
+// layered by instance order (later instances overwrite, so the curve goes on top of the axes).
 //
-// Each segment quad is offset in *pixel* space by a constant half-width and then converted
-// back to clip space, so the line keeps a constant pixel thickness under any zoom or aspect
-// ratio. (Orthographic projection ⇒ w == 1, so there is no perspective-divide subtlety.)
+// Each segment quad is offset in *pixel* space by a constant half-width and converted back to clip
+// space, so the line keeps a constant pixel thickness under any zoom or aspect ratio.
+// (Orthographic projection ⇒ w == 1, so there is no perspective-divide subtlety.)
 
-[[vk::binding(0, 0)]] StructuredBuffer<float2> points;
+[[vk::binding(0, 0)]] StructuredBuffer<float2> positions; // two endpoints per segment
+[[vk::binding(1, 0)]] StructuredBuffer<float4> colors;    // one colour per segment
 
 struct PushData
 {
@@ -22,6 +26,7 @@ struct PushData
 struct VSOut
 {
     float4 position : SV_Position;
+    [[vk::location(0)]] float4 color : COLOR0;
 };
 
 // corner.x selects the endpoint (0 ⇒ P0, 1 ⇒ P1); corner.y is the side (+1 / -1).
@@ -35,20 +40,8 @@ VSOut main(uint vid : SV_VertexID, uint seg : SV_InstanceID)
 {
     VSOut output;
 
-    uint count  = 0;
-    uint stride = 0;
-    points.GetDimensions(count, stride);
-
-    // set_instances_from gives one instance per point (N), but a polyline of N points has only
-    // N-1 segments — collapse the extra trailing instance to a degenerate vertex outside clip.
-    if (seg + 1u >= count)
-    {
-        output.position = float4(0.0, 0.0, 2.0, 1.0); // z = 2 (beyond the far plane) ⇒ clipped
-        return output;
-    }
-
-    float2 p0 = points[seg];
-    float2 p1 = points[seg + 1u];
+    float2 p0 = positions[2u * seg];
+    float2 p1 = positions[2u * seg + 1u];
 
     float4 clip0 = mul(float4(p0, 0.0, 1.0), pc.view_proj);
     float4 clip1 = mul(float4(p1, 0.0, 1.0), pc.view_proj);
@@ -69,5 +62,6 @@ VSOut main(uint vid : SV_VertexID, uint seg : SV_InstanceID)
     float2 offset_ndc = offset_px / half_extent;
 
     output.position = base + float4(offset_ndc * base.w, 0.0, 0.0);
+    output.color    = colors[seg];
     return output;
 }
