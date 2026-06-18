@@ -1,5 +1,4 @@
 #include <geng/Bounds2D.hpp>
-
 #include <glm/ext/matrix_clip_space.hpp> // glm::ortho
 
 namespace geng

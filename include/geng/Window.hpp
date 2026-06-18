@@ -3,10 +3,8 @@
 
 #include <span>
 #include <vector>
-
-#include <vulkan/vulkan.h>
-
 #include <veng/rhi/Enums.hpp>
+#include <vulkan/vulkan.h>
 
 struct GLFWwindow;
 

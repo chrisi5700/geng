@@ -1,6 +1,5 @@
-#include <geng/Window.hpp>
-
 #include <cstdint>
+#include <geng/Window.hpp>
 #include <print>
 #include <span>
 #include <stdexcept>

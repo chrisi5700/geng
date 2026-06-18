@@ -8,10 +8,13 @@
 # as an extra Slang search path, so `GraphicsNode("line.vert", ...)` resolves our `.slang` files.
 
 find_package(glm CONFIG REQUIRED)
+find_package(Stb REQUIRED) # stb_truetype, for the font atlas
 
 target_add_library(geng)
-target_sources(geng PRIVATE Bounds2D.cpp Window.cpp Renderer.cpp OffscreenRenderer.cpp)
+target_sources(geng PRIVATE Bounds2D.cpp Window.cpp Renderer.cpp OffscreenRenderer.cpp FontAtlas.cpp StbTrueTypeImpl.cpp)
 target_include_directories(geng PUBLIC ${CMAKE_SOURCE_DIR}/include)
+# SYSTEM: stb is not -Wall/clang-tidy/cppcheck clean — keep its header out of geng's analysis.
+target_include_directories(geng SYSTEM PRIVATE ${Stb_INCLUDE_DIR})
 target_compile_definitions(geng PUBLIC GLM_FORCE_DEPTH_ZERO_TO_ONE)
 target_compile_definitions(geng PRIVATE GENG_SHADER_DIR="${CMAKE_SOURCE_DIR}/shaders")
 target_compile_features(geng PUBLIC cxx_std_23)
@@ -21,4 +24,5 @@ target_link_libraries(geng
                veng_managers
                veng_render_graph
                veng_resources
+               veng_assets
                veng_context)

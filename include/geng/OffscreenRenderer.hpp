@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <memory>
 #include <string>
-
 #include <veng/gpu/ImageRef.hpp>
 #include <veng/rendergraph/Graph.hpp>
 #include <veng/rhi/Enums.hpp>
@@ -36,6 +35,9 @@ class OffscreenRenderer
 	OffscreenRenderer& operator=(OffscreenRenderer&&)	   = delete;
 
 	[[nodiscard]] veng::graph::Graph& graph() noexcept { return m_graph; }
+
+	/// The veng context backing this renderer (device + allocator) — e.g. to build a FontAtlas.
+	[[nodiscard]] veng::Context& context() noexcept;
 
 	/// The fixed screen-size edge sizing the offscreen render target.
 	[[nodiscard]] veng::graph::TypedHandle<veng::rhi::Extent2D> screen() const noexcept { return m_screen; }

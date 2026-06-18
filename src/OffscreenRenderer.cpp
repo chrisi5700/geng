@@ -1,13 +1,11 @@
-#include <geng/OffscreenRenderer.hpp>
-
 #include <array>
 #include <cstdint>
+#include <geng/OffscreenRenderer.hpp>
 #include <memory>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
-
 #include <veng/context/Context.hpp>
 #include <veng/managers/CommandManager.hpp>
 #include <veng/managers/HeadlessExecutor.hpp>
@@ -43,6 +41,11 @@ OffscreenRenderer::~OffscreenRenderer()
 	{
 		(void)m_ctx->device().waitIdle();
 	}
+}
+
+veng::Context& OffscreenRenderer::context() noexcept
+{
+	return *m_ctx;
 }
 
 bool OffscreenRenderer::capture_png(const std::string& png_path)

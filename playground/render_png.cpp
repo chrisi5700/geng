@@ -2,12 +2,12 @@
 // demo, but driven by the OffscreenRenderer and captured to a file.
 
 #include <exception>
+#include <geng/Bounds2D.hpp>
+#include <geng/FontAtlas.hpp>
+#include <geng/OffscreenRenderer.hpp>
 #include <numbers>
 #include <print>
 #include <string>
-
-#include <geng/Bounds2D.hpp>
-#include <geng/OffscreenRenderer.hpp>
 
 #include "plot.hpp"
 
@@ -26,8 +26,15 @@ int main()
 	try
 	{
 		geng::OffscreenRenderer renderer(WIDTH, HEIGHT);
+		auto					atlas = geng::FontAtlas::create(
+			renderer.context(), std::string(GENG_ASSET_DIR) + "/fonts/FiraCodeNerdFontMono-Regular.ttf", 48.0F);
+		if (!atlas.has_value())
+		{
+			std::println("geng: font load failed: {}", geng::to_string(atlas.error()));
+			return 1;
+		}
 		demo::plot_sin(renderer.graph(), renderer.screen(), renderer.scene_image(), renderer.scene_color_format(),
-					   bounds);
+					   bounds, atlas.value());
 		if (!renderer.capture_png(out_path))
 		{
 			std::println("geng: failed to render {}", out_path);

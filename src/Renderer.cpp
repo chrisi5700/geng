@@ -1,13 +1,11 @@
-#include <geng/Renderer.hpp>
-
 #include <array>
 #include <chrono>
+#include <geng/Renderer.hpp>
 #include <memory>
 #include <stdexcept>
 #include <string_view>
 #include <thread>
 #include <utility>
-
 #include <veng/context/Context.hpp>
 #include <veng/gpu/ImageRef.hpp>
 #include <veng/managers/CommandManager.hpp>
@@ -46,8 +44,8 @@ Renderer::Renderer(const char* title, int width, int height)
 	}
 	m_swap = std::make_unique<veng::SwapchainManager>(std::move(swap_result.value()));
 
-	m_pool	   = std::make_unique<veng::ResourcePool>(m_ctx->device(), m_ctx->rhi(), m_ctx->allocator(), FRAMES_IN_FLIGHT);
-	m_commands = std::make_unique<veng::CommandManager>(*m_ctx);
+	m_pool = std::make_unique<veng::ResourcePool>(m_ctx->device(), m_ctx->rhi(), m_ctx->allocator(), FRAMES_IN_FLIGHT);
+	m_commands			 = std::make_unique<veng::CommandManager>(*m_ctx);
 	m_scene_color_format = m_swap->format();
 
 	using namespace veng::graph;
@@ -77,6 +75,11 @@ Renderer::~Renderer()
 	{
 		(void)m_ctx->device().waitIdle();
 	}
+}
+
+veng::Context& Renderer::context() noexcept
+{
+	return *m_ctx;
 }
 
 void Renderer::rebuild_swapchain(veng::rhi::Extent2D extent)

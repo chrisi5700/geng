@@ -20,22 +20,25 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <memory>
-#include <vector>
-
+#include <format>
+#include <geng/Bounds2D.hpp>
+#include <geng/FontAtlas.hpp>
+#include <glm/common.hpp>
 #include <glm/mat4x4.hpp>
 #include <glm/vec2.hpp>
 #include <glm/vec4.hpp>
-
+#include <iterator>
+#include <memory>
+#include <string>
+#include <string_view>
+#include <vector>
 #include <veng/gpu/BufferRef.hpp>
 #include <veng/gpu/ImageRef.hpp>
 #include <veng/nodes/GraphicsNode.hpp>
 #include <veng/nodes/StorageBufferNode.hpp>
-#include <veng/rendergraph/Graph.hpp>
 #include <veng/rendergraph/data/Data.hpp>
+#include <veng/rendergraph/Graph.hpp>
 #include <veng/rhi/Enums.hpp>
-
-#include <geng/Bounds2D.hpp>
 
 namespace demo
 {
@@ -49,13 +52,38 @@ struct LineUniforms
 	friend bool operator==(const LineUniforms&, const LineUniforms&) noexcept = default;
 };
 
+/// One glyph instance for shaders/text.vert.slang. `alignas(16)` + the field order match the
+/// std430 `StructuredBuffer<Glyph>` layout (float4 forces 16-byte stride): colour, then a
+/// data-space anchor and pixel-space quad rect, then the atlas UVs.
+struct alignas(16) Glyph
+{
+	glm::vec4 color;
+	glm::vec2 anchor;
+	glm::vec2 min_px;
+	glm::vec2 max_px;
+	glm::vec2 uv0;
+	glm::vec2 uv1;
+
+	friend bool operator==(const Glyph&, const Glyph&) = default;
+};
+static_assert(sizeof(Glyph) == 64, "Glyph must match the std430 StructuredBuffer stride");
+
+/// Matches `PushData` in shaders/text.vert.slang (std430: mat4 @0, vec2 @64).
+struct TextPush
+{
+	glm::mat4 view_proj;
+	glm::vec2 extent;
+
+	friend bool operator==(const TextPush&, const TextPush&) noexcept = default;
+};
+
 /// Supersampling factor for the bake: the cache texture is the screen size times this on each
 /// axis, so a 1280x720 window bakes at ~4K. Higher = smoother (more downsample) but more VRAM.
 inline constexpr std::uint32_t SUPERSAMPLE = 3;
 /// On-screen half line width, in pixels; scaled into bake-texel space below.
-inline constexpr float SCREEN_HALF_WIDTH_PX = 1.5F;
-inline constexpr float BAKE_HALF_WIDTH_PX	= SCREEN_HALF_WIDTH_PX * static_cast<float>(SUPERSAMPLE);
-inline constexpr std::size_t SAMPLE_COUNT	= 256;
+inline constexpr float		 SCREEN_HALF_WIDTH_PX = 1.5F;
+inline constexpr float		 BAKE_HALF_WIDTH_PX	  = SCREEN_HALF_WIDTH_PX * static_cast<float>(SUPERSAMPLE);
+inline constexpr std::size_t SAMPLE_COUNT		  = 256;
 
 inline std::vector<glm::vec2> sample_sin(const geng::Bounds2D& bounds, std::size_t samples)
 {
@@ -209,10 +237,64 @@ inline Segments build_segments(const std::vector<glm::vec2>& curve, const geng::
 	return out;
 }
 
+/// Lay out numeric tick labels at the grid positions: x-axis labels centred below the x-axis,
+/// y-axis labels right-aligned to the left of the y-axis. Each glyph is anchored at its tick in
+/// data space and offset in (bake) pixels, so labels track the plot but stay a constant size.
+inline std::vector<Glyph> build_glyphs(const geng::FontAtlas& font, const geng::Bounds2D& box)
+{
+	const glm::vec4 label_color{0.65F, 0.67F, 0.72F, 1.0F};
+	const float		margin = font.pixel_height() * 0.35F; // gap to the axis, in bake pixels
+
+	std::vector<Glyph> out;
+	const GridTicks	   ticks = grid_ticks(box);
+
+	const auto emit_label = [&](std::string_view text, glm::vec2 anchor, bool below)
+	{
+		const std::vector<geng::GlyphQuad> quads = font.layout(text);
+		glm::vec2						   low{1e9F, 1e9F};
+		glm::vec2						   high{-1e9F, -1e9F};
+		for (const geng::GlyphQuad& quad : quads)
+		{
+			low	 = glm::min(low, quad.min_px);
+			high = glm::max(high, quad.max_px);
+		}
+		// Centre x-labels under the axis; right-align y-labels to its left and centre vertically.
+		const glm::vec2 shift = below ? glm::vec2{-(low.x + high.x) * 0.5F, margin - low.y}
+									  : glm::vec2{-high.x - margin, -(low.y + high.y) * 0.5F};
+		std::ranges::transform(quads, std::back_inserter(out),
+							   [&](const geng::GlyphQuad& quad)
+							   {
+								   return Glyph{.color	= label_color,
+												.anchor = anchor,
+												.min_px = quad.min_px + shift,
+												.max_px = quad.max_px + shift,
+												.uv0	= quad.uv0,
+												.uv1	= quad.uv1};
+							   });
+	};
+
+	for (const float tick_x : ticks.xs)
+	{
+		if (std::abs(tick_x) >= 1e-4F)
+		{
+			emit_label(std::format("{:g}", tick_x), glm::vec2{tick_x, 0.0F}, true);
+		}
+	}
+	for (const float tick_y : ticks.ys)
+	{
+		if (std::abs(tick_y) >= 1e-4F)
+		{
+			emit_label(std::format("{:g}", tick_y), glm::vec2{0.0F, tick_y}, false);
+		}
+	}
+	return out;
+}
+
 /// Wire a single sin(x) curve and its coordinate axes into @p graph as a raster cache, producing
 /// into @p scene_image.
 inline void plot_sin(veng::graph::Graph& graph, veng::graph::TypedHandle<veng::rhi::Extent2D> screen,
-					 veng::graph::DataHandle scene_image, veng::rhi::Format color_format, const geng::Bounds2D& bounds)
+					 veng::graph::DataHandle scene_image, veng::rhi::Format color_format, const geng::Bounds2D& bounds,
+					 const geng::FontAtlas& font)
 {
 	using namespace veng;
 	using namespace veng::graph;
@@ -220,11 +302,10 @@ inline void plot_sin(veng::graph::Graph& graph, veng::graph::TypedHandle<veng::r
 	const auto curve_src = graph.add_source<std::vector<glm::vec2>>(sample_sin(bounds, SAMPLE_COUNT));
 
 	// Reactive data box, projection and line-list (axes + curve), all derived from the curve.
-	const auto box		 = graph.add_transform([](const std::vector<glm::vec2>& pts) { return fit_bounds(pts); }, curve_src);
-	const auto view_proj = graph.add_transform([](const geng::Bounds2D& bnd) { return geng::ortho_view(bnd); }, box);
-	const auto segments	 = graph.add_transform(
-		 [](const std::vector<glm::vec2>& pts, const geng::Bounds2D& bnd) { return build_segments(pts, bnd); }, curve_src,
-		 box);
+	const auto box = graph.add_transform([](const std::vector<glm::vec2>& pts) { return fit_bounds(pts); }, curve_src);
+	const auto view_proj  = graph.add_transform([](const geng::Bounds2D& bnd) { return geng::ortho_view(bnd); }, box);
+	const auto segments	  = graph.add_transform([](const std::vector<glm::vec2>& pts, const geng::Bounds2D& bnd)
+												{ return build_segments(pts, bnd); }, curve_src, box);
 	const auto positions  = graph.add_transform([](const Segments& seg) { return seg.positions; }, segments);
 	const auto seg_colors = graph.add_transform([](const Segments& seg) { return seg.colors; }, segments);
 
@@ -246,7 +327,7 @@ inline void plot_sin(veng::graph::Graph& graph, veng::graph::TypedHandle<veng::r
 		[](const glm::mat4& proj, const rhi::Extent2D& size)
 		{
 			return LineUniforms{.view_proj = proj,
-								.extent		= glm::vec2(static_cast<float>(size.width), static_cast<float>(size.height)),
+								.extent	   = glm::vec2(static_cast<float>(size.width), static_cast<float>(size.height)),
 								.half_width = BAKE_HALF_WIDTH_PX};
 		},
 		view_proj, bake_extent);
@@ -254,7 +335,7 @@ inline void plot_sin(veng::graph::Graph& graph, veng::graph::TypedHandle<veng::r
 	// BAKE: render the axes + curve line-list into an offscreen RGBA8 cache, sized by bake_extent.
 	const DataHandle baked_plot = graph.add(std::make_unique<ValueData<gpu::ImageRef>>(gpu::ImageRef{}));
 	auto			 bake = std::make_unique<nodes::GraphicsNode>("line.vert", "line.frag", rhi::Format::RGBA8_UNORM,
-													  rhi::Format::UNDEFINED, 6, bake_extent, baked_plot);
+																  rhi::Format::UNDEFINED, 6, bake_extent, baked_plot);
 	bake->add_storage_buffer(positions_ref)
 		.add_storage_buffer(colors_ref)
 		.set_instances_from(colors_ref) // one instance per segment
@@ -262,10 +343,38 @@ inline void plot_sin(veng::graph::Graph& graph, veng::graph::TypedHandle<veng::r
 		.clear_color({0.06F, 0.06F, 0.09F, 1.0F});
 	graph.set_producer(baked_plot, graph.add(std::move(bake)));
 
-	// DISPLAY: a fullscreen pass that samples the cache onto the screen (downsampling resolve = SSAA).
+	// TEXT: bake the tick labels into their own transparent cache — blended glyph quads that sample
+	// the font atlas. Reactive on the box, so the labels re-lay-out when the data extent changes.
+	const auto glyph_data =
+		graph.add_transform([&font](const geng::Bounds2D& bnd) { return build_glyphs(font, bnd); }, box);
+	const DataHandle glyphs_ref = graph.add(std::make_unique<ValueData<gpu::BufferRef>>(gpu::BufferRef{}));
+	graph.set_producer(glyphs_ref,
+					   graph.add(std::make_unique<nodes::StorageBufferNode>(glyph_data, "glyphs", glyphs_ref)));
+	const auto atlas_src = graph.add_source<gpu::ImageRef>(font.atlas_ref());
+	const auto text_push = graph.add_transform(
+		[](const glm::mat4& proj, const rhi::Extent2D& size)
+		{
+			return TextPush{.view_proj = proj,
+							.extent	   = glm::vec2(static_cast<float>(size.width), static_cast<float>(size.height))};
+		},
+		view_proj, bake_extent);
+
+	const DataHandle text_cache = graph.add(std::make_unique<ValueData<gpu::ImageRef>>(gpu::ImageRef{}));
+	auto text_node = std::make_unique<nodes::GraphicsNode>("text.vert", "text.frag", rhi::Format::RGBA8_UNORM,
+														   rhi::Format::UNDEFINED, 6, bake_extent, text_cache);
+	text_node->add_storage_buffer(glyphs_ref)
+		.add_sampled_image(atlas_src, "atlas")
+		.set_instances_from(glyphs_ref) // one instance per glyph
+		.push_constant<TextPush>(text_push, rhi::ShaderStage::VERTEX)
+		.clear_color({0.0F, 0.0F, 0.0F, 0.0F}) // transparent
+		.blend(true);						   // composite glyph coverage
+	graph.set_producer(text_cache, graph.add(std::move(text_node)));
+
+	// DISPLAY: a fullscreen pass that composites the plot cache and the label cache onto the screen
+	// (downsampling resolve = SSAA).
 	auto display = std::make_unique<nodes::GraphicsNode>("fullscreen.vert", "display.frag", color_format,
 														 rhi::Format::UNDEFINED, 3, screen, scene_image);
-	display->add_sampled_image(baked_plot, "plot");
+	display->add_sampled_image(baked_plot, "plot").add_sampled_image(text_cache, "text");
 	graph.set_producer(scene_image, graph.add(std::move(display)));
 }
 } // namespace demo

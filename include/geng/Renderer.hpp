@@ -1,17 +1,14 @@
 #ifndef GENG_RENDERER_HPP
 #define GENG_RENDERER_HPP
 
+#include <geng/Window.hpp>
 #include <memory>
 #include <mutex>
 #include <vector>
-
-#include <vulkan/vulkan.hpp>
-
 #include <veng/gpu/ImageRef.hpp>
 #include <veng/rendergraph/Graph.hpp>
 #include <veng/rhi/Enums.hpp>
-
-#include <geng/Window.hpp>
+#include <vulkan/vulkan.hpp>
 
 namespace veng
 {
@@ -48,6 +45,9 @@ class Renderer
 
 	[[nodiscard]] veng::graph::Graph& graph() noexcept { return m_graph; }
 
+	/// The veng context backing this renderer (device + allocator) — e.g. to build a FontAtlas.
+	[[nodiscard]] veng::Context& context() noexcept;
+
 	/// The screen-size edge (`Extent2D`); sizes render targets and updates on resize.
 	[[nodiscard]] veng::graph::TypedHandle<veng::rhi::Extent2D> screen() const noexcept { return m_screen; }
 
@@ -64,13 +64,13 @@ class Renderer
 	 private:
 	void rebuild_swapchain(veng::rhi::Extent2D extent);
 
-	Window								  m_window;
-	std::unique_ptr<veng::Context>		  m_ctx;
-	std::unique_ptr<veng::SwapchainManager> m_swap;
-	std::unique_ptr<veng::ResourcePool>	  m_pool;
-	std::unique_ptr<veng::CommandManager> m_commands;
-	veng::graph::InlineScheduler		  m_scheduler;
-	veng::graph::Graph					  m_graph;
+	Window										  m_window;
+	std::unique_ptr<veng::Context>				  m_ctx;
+	std::unique_ptr<veng::SwapchainManager>		  m_swap;
+	std::unique_ptr<veng::ResourcePool>			  m_pool;
+	std::unique_ptr<veng::CommandManager>		  m_commands;
+	veng::graph::InlineScheduler				  m_scheduler;
+	veng::graph::Graph							  m_graph;
 	veng::graph::TypedHandle<veng::rhi::Extent2D> m_screen;
 	veng::graph::TypedHandle<veng::gpu::ImageRef> m_swapchain_image;
 	veng::graph::DataHandle						  m_scene_image;
