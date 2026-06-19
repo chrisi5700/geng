@@ -32,12 +32,15 @@ int main()
 			std::println("geng: font load failed: {}", geng::to_string(atlas.error()));
 			return 1;
 		}
-		std::vector<glm::vec2> curve	 = demo::sample_sin(bounds, demo::SAMPLE_COUNT);
-		const auto			   curve_src = renderer.graph().add_source<std::vector<glm::vec2>>(curve);
-		geng::View			   view(demo::fit_bounds(curve));
-		const auto			   view_src = renderer.graph().add_source<geng::Bounds2D>(view.rect());
-		demo::plot_curve(renderer.graph(), renderer.screen(), renderer.scene_image(), renderer.scene_color_format(),
-						 curve_src, view_src, atlas.value());
+		const auto				 sine = demo::sample_sin(bounds, demo::SAMPLE_COUNT);
+		geng::View				 view(demo::fit_bounds(sine));
+		std::vector<demo::Curve> curves{
+			{.points = sine, .color = demo::SINE_COLOR},
+			{.points = demo::sample_circle(demo::SAMPLE_COUNT), .color = demo::CIRCLE_COLOR}};
+		const auto curves_src = renderer.graph().add_source<std::vector<demo::Curve>>(curves);
+		const auto view_src	  = renderer.graph().add_source<geng::Bounds2D>(view.rect());
+		demo::plot_curves(renderer.graph(), renderer.screen(), renderer.scene_image(), renderer.scene_color_format(),
+						  curves_src, view_src, atlas.value());
 
 		// Interactive view control — the windowing stays here in the demo, not the library. Scroll
 		// zooms toward the cursor, left-drag pans. Each input mutates the View and re-sets the graph's
@@ -82,9 +85,9 @@ int main()
 				if (now - last >= std::chrono::milliseconds(100))
 				{
 					last = now;
-					curve.emplace_back(next_x, std::sin(next_x));
+					curves.front().points.emplace_back(next_x, std::sin(next_x));
 					next_x += step;
-					renderer.graph().set(curve_src, curve);
+					renderer.graph().set(curves_src, curves);
 				}
 			});
 	}

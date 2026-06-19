@@ -36,12 +36,15 @@ int main()
 			std::println("geng: font load failed: {}", geng::to_string(atlas.error()));
 			return 1;
 		}
-		const auto curve	 = demo::sample_sin(bounds, demo::SAMPLE_COUNT);
-		const auto curve_src = renderer.graph().add_source<std::vector<glm::vec2>>(curve);
-		geng::View view(demo::fit_bounds(curve));
+		const auto					   sine = demo::sample_sin(bounds, demo::SAMPLE_COUNT);
+		const std::vector<demo::Curve> curves{
+			{.points = sine, .color = demo::SINE_COLOR},
+			{.points = demo::sample_circle(demo::SAMPLE_COUNT), .color = demo::CIRCLE_COLOR}};
+		const auto curves_src = renderer.graph().add_source<std::vector<demo::Curve>>(curves);
+		geng::View view(demo::fit_bounds(sine));
 		const auto view_src = renderer.graph().add_source<geng::Bounds2D>(view.rect());
-		demo::plot_curve(renderer.graph(), renderer.screen(), renderer.scene_image(), renderer.scene_color_format(),
-						 curve_src, view_src, atlas.value());
+		demo::plot_curves(renderer.graph(), renderer.screen(), renderer.scene_image(), renderer.scene_color_format(),
+						  curves_src, view_src, atlas.value());
 		if (!renderer.capture_png(out_path))
 		{
 			std::println("geng: failed to render {}", out_path);

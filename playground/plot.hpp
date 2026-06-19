@@ -29,6 +29,7 @@
 #include <glm/vec4.hpp>
 #include <iterator>
 #include <memory>
+#include <numbers>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -94,6 +95,20 @@ inline std::vector<glm::vec2> sample_sin(const geng::Bounds2D& bounds, std::size
 		const float frac  = static_cast<float>(idx) / static_cast<float>(samples - 1);
 		const float pos_x = bounds.min_x + (frac * (bounds.max_x - bounds.min_x));
 		points.emplace_back(pos_x, std::sin(pos_x));
+	}
+	return points;
+}
+
+/// Sample the parametric unit circle (cos t, sin t) for t in [0, 2pi] into @p samples points.
+inline std::vector<glm::vec2> sample_circle(std::size_t samples)
+{
+	std::vector<glm::vec2> points;
+	points.reserve(samples);
+	for (std::size_t idx = 0; idx < samples; ++idx)
+	{
+		const float angle =
+			(2.0F * std::numbers::pi_v<float>)*static_cast<float>(idx) / static_cast<float>(samples - 1);
+		points.emplace_back(std::cos(angle), std::sin(angle));
 	}
 	return points;
 }
@@ -201,13 +216,24 @@ inline void add_segment(Segments& out, glm::vec2 start, glm::vec2 end, const glm
 	out.colors.push_back(color);
 }
 
-/// Build the plot's whole line-LIST, back to front so painter order layers it correctly: faint
-/// grid, then grey coordinate axes, then the cyan curve expanded segment-by-segment on top.
-inline Segments build_segments(const std::vector<glm::vec2>& curve, const geng::Bounds2D& box)
+/// A plotted curve: a polyline of data-space points and the colour to draw it in.
+struct Curve
+{
+	std::vector<glm::vec2> points;
+	glm::vec4			   color;
+
+	friend bool operator==(const Curve&, const Curve&) = default;
+};
+
+inline const glm::vec4 SINE_COLOR{0.30F, 0.80F, 1.00F, 1.0F};	///< cyan
+inline const glm::vec4 CIRCLE_COLOR{0.30F, 0.85F, 0.45F, 1.0F}; ///< green
+
+/// Build the plot's whole line-LIST, back to front so painter order layers it correctly: faint grid,
+/// then grey coordinate axes, then each curve expanded segment-by-segment on top (later curves win).
+inline Segments build_segments(const std::vector<Curve>& curves, const geng::Bounds2D& box)
 {
 	const glm::vec4 grid_color{0.16F, 0.17F, 0.22F, 1.0F};
 	const glm::vec4 axis_color{0.40F, 0.42F, 0.50F, 1.0F};
-	const glm::vec4 curve_color{0.30F, 0.80F, 1.00F, 1.0F};
 
 	Segments		out;
 	const GridTicks ticks = grid_ticks(box);
@@ -229,10 +255,13 @@ inline Segments build_segments(const std::vector<glm::vec2>& curve, const geng::
 	// Coordinate axes through the origin, over the grid.
 	add_segment(out, {box.min_x, 0.0F}, {box.max_x, 0.0F}, axis_color); // x-axis
 	add_segment(out, {0.0F, box.min_y}, {0.0F, box.max_y}, axis_color); // y-axis
-	// The curve, polyline expanded into independent segments, on top.
-	for (std::size_t idx = 1; idx < curve.size(); ++idx)
+	// Each curve, polyline expanded into independent segments; later curves layer over earlier ones.
+	for (const Curve& curve : curves)
 	{
-		add_segment(out, curve.at(idx - 1U), curve.at(idx), curve_color);
+		for (std::size_t idx = 1; idx < curve.points.size(); ++idx)
+		{
+			add_segment(out, curve.points.at(idx - 1U), curve.points.at(idx), curve.color);
+		}
 	}
 	return out;
 }
@@ -290,22 +319,23 @@ inline std::vector<Glyph> build_glyphs(const geng::FontAtlas& font, const geng::
 	return out;
 }
 
-/// Wire the @p curve point source and its coordinate axes into @p graph as a raster cache, producing
-/// into @p scene_image. The caller owns and drives @p curve, so points can be streamed in over time —
-/// a `set` of the source re-bakes only the line cache (the labels/axes depend on the view, not the curve).
-inline void plot_curve(veng::graph::Graph& graph, veng::graph::TypedHandle<veng::rhi::Extent2D> screen,
-					   veng::graph::DataHandle scene_image, veng::rhi::Format color_format,
-					   veng::graph::TypedHandle<std::vector<glm::vec2>> curve,
-					   veng::graph::TypedHandle<geng::Bounds2D> view, const geng::FontAtlas& font)
+/// Wire the @p curves source and its coordinate axes into @p graph as a raster cache, producing into
+/// @p scene_image. The caller owns and drives @p curves (a list of coloured polylines), so curves can
+/// be added or their points streamed in over time — a `set` re-bakes only the line cache (labels/axes
+/// depend on the view, not the curves).
+inline void plot_curves(veng::graph::Graph& graph, veng::graph::TypedHandle<veng::rhi::Extent2D> screen,
+						veng::graph::DataHandle scene_image, veng::rhi::Format color_format,
+						veng::graph::TypedHandle<std::vector<Curve>> curves,
+						veng::graph::TypedHandle<geng::Bounds2D> view, const geng::FontAtlas& font)
 {
 	using namespace veng;
 	using namespace veng::graph;
 
-	// Projection and line-list (axes + curve) derive from the view rect, so panning/zooming re-projects
-	// the plot and re-nices the grid/labels; the curve itself stays in data space and is clipped to it.
+	// Projection and line-list (axes + curves) derive from the view rect, so panning/zooming re-projects
+	// the plot and re-nices the grid/labels; the curves stay in data space and are clipped to the view.
 	const auto view_proj  = graph.add_transform([](const geng::Bounds2D& bnd) { return geng::ortho_view(bnd); }, view);
-	const auto segments	  = graph.add_transform([](const std::vector<glm::vec2>& pts, const geng::Bounds2D& bnd)
-												{ return build_segments(pts, bnd); }, curve, view);
+	const auto segments	  = graph.add_transform([](const std::vector<Curve>& crv, const geng::Bounds2D& bnd)
+												{ return build_segments(crv, bnd); }, curves, view);
 	const auto positions  = graph.add_transform([](const Segments& seg) { return seg.positions; }, segments);
 	const auto seg_colors = graph.add_transform([](const Segments& seg) { return seg.colors; }, segments);
 
