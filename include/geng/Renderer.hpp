@@ -48,6 +48,9 @@ class Renderer
 	/// The veng context backing this renderer (device + allocator) — e.g. to build a FontAtlas.
 	[[nodiscard]] veng::Context& context() noexcept;
 
+	/// The window this renderer draws into — e.g. to register scroll/cursor callbacks for view control.
+	[[nodiscard]] Window& window() noexcept { return m_window; }
+
 	/// The screen-size edge (`Extent2D`); sizes render targets and updates on resize.
 	[[nodiscard]] veng::graph::TypedHandle<veng::rhi::Extent2D> screen() const noexcept { return m_screen; }
 

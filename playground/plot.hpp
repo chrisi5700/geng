@@ -294,18 +294,18 @@ inline std::vector<Glyph> build_glyphs(const geng::FontAtlas& font, const geng::
 /// into @p scene_image.
 inline void plot_sin(veng::graph::Graph& graph, veng::graph::TypedHandle<veng::rhi::Extent2D> screen,
 					 veng::graph::DataHandle scene_image, veng::rhi::Format color_format, const geng::Bounds2D& bounds,
-					 const geng::FontAtlas& font)
+					 veng::graph::TypedHandle<geng::Bounds2D> view, const geng::FontAtlas& font)
 {
 	using namespace veng;
 	using namespace veng::graph;
 
 	const auto curve_src = graph.add_source<std::vector<glm::vec2>>(sample_sin(bounds, SAMPLE_COUNT));
 
-	// Reactive data box, projection and line-list (axes + curve), all derived from the curve.
-	const auto box = graph.add_transform([](const std::vector<glm::vec2>& pts) { return fit_bounds(pts); }, curve_src);
-	const auto view_proj  = graph.add_transform([](const geng::Bounds2D& bnd) { return geng::ortho_view(bnd); }, box);
+	// Projection and line-list (axes + curve) derive from the view rect, so panning/zooming re-projects
+	// the plot and re-nices the grid/labels; the curve itself stays in data space and is clipped to it.
+	const auto view_proj  = graph.add_transform([](const geng::Bounds2D& bnd) { return geng::ortho_view(bnd); }, view);
 	const auto segments	  = graph.add_transform([](const std::vector<glm::vec2>& pts, const geng::Bounds2D& bnd)
-												{ return build_segments(pts, bnd); }, curve_src, box);
+												{ return build_segments(pts, bnd); }, curve_src, view);
 	const auto positions  = graph.add_transform([](const Segments& seg) { return seg.positions; }, segments);
 	const auto seg_colors = graph.add_transform([](const Segments& seg) { return seg.colors; }, segments);
 
@@ -344,9 +344,9 @@ inline void plot_sin(veng::graph::Graph& graph, veng::graph::TypedHandle<veng::r
 	graph.set_producer(baked_plot, graph.add(std::move(bake)));
 
 	// TEXT: bake the tick labels into their own transparent cache — blended glyph quads that sample
-	// the font atlas. Reactive on the box, so the labels re-lay-out when the data extent changes.
+	// the font atlas. Reactive on the view, so labels re-lay-out as the view pans / zooms.
 	const auto glyph_data =
-		graph.add_transform([&font](const geng::Bounds2D& bnd) { return build_glyphs(font, bnd); }, box);
+		graph.add_transform([&font](const geng::Bounds2D& bnd) { return build_glyphs(font, bnd); }, view);
 	const DataHandle glyphs_ref = graph.add(std::make_unique<ValueData<gpu::BufferRef>>(gpu::BufferRef{}));
 	graph.set_producer(glyphs_ref,
 					   graph.add(std::make_unique<nodes::StorageBufferNode>(glyph_data, "glyphs", glyphs_ref)));

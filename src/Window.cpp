@@ -1,8 +1,10 @@
 #include <cstdint>
+#include <functional>
 #include <geng/Window.hpp>
 #include <print>
 #include <span>
 #include <stdexcept>
+#include <utility>
 
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
@@ -37,6 +39,27 @@ Window::Window(const char* title, int width, int height)
 		glfwTerminate();
 		throw std::runtime_error("geng::Window: glfwCreateWindow failed");
 	}
+
+	// Forward GLFW's C callbacks to the per-window std::functions via the user pointer.
+	glfwSetWindowUserPointer(m_window, this);
+	glfwSetScrollCallback(m_window,
+						  [](GLFWwindow* win, double offset_x, double offset_y)
+						  {
+							  auto* self = static_cast<Window*>(glfwGetWindowUserPointer(win));
+							  if (self != nullptr && self->m_scroll)
+							  {
+								  self->m_scroll(offset_x, offset_y);
+							  }
+						  });
+	glfwSetCursorPosCallback(m_window,
+							 [](GLFWwindow* win, double pos_x, double pos_y)
+							 {
+								 auto* self = static_cast<Window*>(glfwGetWindowUserPointer(win));
+								 if (self != nullptr && self->m_cursor)
+								 {
+									 self->m_cursor(pos_x, pos_y);
+								 }
+							 });
 
 	std::uint32_t	   count	  = 0;
 	const char* const* extensions = glfwGetRequiredInstanceExtensions(&count);
@@ -98,5 +121,37 @@ VkSurfaceKHR Window::create_surface(VkInstance instance) const noexcept
 		return VK_NULL_HANDLE;
 	}
 	return surface;
+}
+
+veng::rhi::Extent2D Window::window_size() const noexcept
+{
+	int width  = 0;
+	int height = 0;
+	glfwGetWindowSize(m_window, &width, &height);
+	return veng::rhi::Extent2D{.width  = static_cast<std::uint32_t>(width),
+							   .height = static_cast<std::uint32_t>(height)};
+}
+
+std::pair<double, double> Window::cursor_pos() const noexcept
+{
+	double pos_x = 0.0;
+	double pos_y = 0.0;
+	glfwGetCursorPos(m_window, &pos_x, &pos_y);
+	return {pos_x, pos_y};
+}
+
+bool Window::mouse_held() const noexcept
+{
+	return glfwGetMouseButton(m_window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
+}
+
+void Window::on_scroll(std::function<void(double, double)> callback)
+{
+	m_scroll = std::move(callback);
+}
+
+void Window::on_cursor_pos(std::function<void(double, double)> callback)
+{
+	m_cursor = std::move(callback);
 }
 } // namespace geng

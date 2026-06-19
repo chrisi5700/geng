@@ -5,6 +5,7 @@
 #include <geng/Bounds2D.hpp>
 #include <geng/FontAtlas.hpp>
 #include <geng/OffscreenRenderer.hpp>
+#include <geng/View.hpp>
 #include <numbers>
 #include <print>
 #include <string>
@@ -33,8 +34,10 @@ int main()
 			std::println("geng: font load failed: {}", geng::to_string(atlas.error()));
 			return 1;
 		}
+		geng::View view(demo::fit_bounds(demo::sample_sin(bounds, demo::SAMPLE_COUNT)));
+		const auto view_src = renderer.graph().add_source<geng::Bounds2D>(view.rect());
 		demo::plot_sin(renderer.graph(), renderer.screen(), renderer.scene_image(), renderer.scene_color_format(),
-					   bounds, atlas.value());
+					   bounds, view_src, atlas.value());
 		if (!renderer.capture_png(out_path))
 		{
 			std::println("geng: failed to render {}", out_path);

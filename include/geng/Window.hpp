@@ -1,7 +1,9 @@
 #ifndef GENG_WINDOW_HPP
 #define GENG_WINDOW_HPP
 
+#include <functional>
 #include <span>
+#include <utility>
 #include <vector>
 #include <veng/rhi/Enums.hpp>
 #include <vulkan/vulkan.h>
@@ -40,9 +42,27 @@ class Window
 	/// Create a surface from @p instance, or `VK_NULL_HANDLE` on failure.
 	[[nodiscard]] VkSurfaceKHR create_surface(VkInstance instance) const noexcept;
 
+	/// Window size in screen coordinates — the units cursor positions use (may differ from the
+	/// framebuffer size on HiDPI). Divide a cursor position by this to get a [0,1] view-fraction.
+	[[nodiscard]] veng::rhi::Extent2D window_size() const noexcept;
+
+	/// Current cursor position in screen coordinates (origin top-left): {x, y}.
+	[[nodiscard]] std::pair<double, double> cursor_pos() const noexcept;
+
+	/// Whether the left mouse button is currently held.
+	[[nodiscard]] bool mouse_held() const noexcept;
+
+	/// Register a scroll handler (offsets in detents; fired during @ref poll).
+	void on_scroll(std::function<void(double offset_x, double offset_y)> callback);
+
+	/// Register a cursor-move handler (screen coordinates; fired during @ref poll).
+	void on_cursor_pos(std::function<void(double pos_x, double pos_y)> callback);
+
 	 private:
-	GLFWwindow*				 m_window = nullptr;
-	std::vector<const char*> m_required_extensions;
+	GLFWwindow*							m_window = nullptr;
+	std::vector<const char*>			m_required_extensions;
+	std::function<void(double, double)> m_scroll;
+	std::function<void(double, double)> m_cursor;
 };
 } // namespace geng
 
