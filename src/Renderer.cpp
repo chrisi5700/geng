@@ -96,6 +96,9 @@ void Renderer::rebuild_swapchain(veng::rhi::Extent2D extent)
 
 void Renderer::run(const std::function<void()>& tick)
 {
+	// Pure OnDemand: a frame renders only when the reactive graph is dirty, so a static plot costs
+	// nothing. A resize dirties the screen-size source (m_screen), which re-bakes the plot at the new
+	// resolution and replans the present chain; a quiet graph idles.
 	while (!m_window.should_close())
 	{
 		Window::poll();
