@@ -60,6 +60,15 @@ Window::Window(const char* title, int width, int height)
 									 self->m_cursor(pos_x, pos_y);
 								 }
 							 });
+	glfwSetFramebufferSizeCallback(m_window,
+								   [](GLFWwindow* win, int width, int height)
+								   {
+									   auto* self = static_cast<Window*>(glfwGetWindowUserPointer(win));
+									   if (self != nullptr && self->m_resize)
+									   {
+										   self->m_resize(width, height);
+									   }
+								   });
 
 	std::uint32_t	   count	  = 0;
 	const char* const* extensions = glfwGetRequiredInstanceExtensions(&count);
@@ -153,5 +162,10 @@ void Window::on_scroll(std::function<void(double, double)> callback)
 void Window::on_cursor_pos(std::function<void(double, double)> callback)
 {
 	m_cursor = std::move(callback);
+}
+
+void Window::on_resize(std::function<void(int, int)> callback)
+{
+	m_resize = std::move(callback);
 }
 } // namespace geng

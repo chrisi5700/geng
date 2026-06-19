@@ -22,6 +22,15 @@ struct Bounds2D
 /// volume, with +Y pointing up on screen (Vulkan's clip Y points down, so the mapping is
 /// flipped). Multiply a `vec4(x, y, 0, 1)` data position by the result to get clip space.
 [[nodiscard]] glm::mat4 ortho_view(const Bounds2D& bounds);
+
+/// Expand @p bounds to viewport aspect @p aspect (width / height), keeping its centre, so it maps to
+/// the viewport with equal scale on both axes (circles stay round). Only grows @p bounds, so all of
+/// it stays visible — for the initial framing or focusing a region.
+[[nodiscard]] Bounds2D aspect_fit(const Bounds2D& bounds, float aspect);
+
+/// Reframe @p bounds to viewport aspect @p aspect, keeping its centre and height (adjusting width).
+/// Idempotent / drift-free under repeated calls — for keeping equal scale across window resizes.
+[[nodiscard]] Bounds2D reframe_aspect(const Bounds2D& bounds, float aspect);
 } // namespace geng
 
 #endif // GENG_BOUNDS2D_HPP

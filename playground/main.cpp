@@ -17,6 +17,52 @@
 
 #include "plot.hpp"
 
+namespace
+{
+/// Wire scroll-zoom (toward the cursor), left-drag pan, and resize-reframe to @p view, re-setting
+/// @p view_src after each change so the OnDemand loop renders. The windowing stays here in the demo,
+/// not the library; the View math is windowing-agnostic.
+template <class ViewSrc>
+void install_view_controls(geng::Renderer& renderer, geng::View& view, ViewSrc view_src)
+{
+	geng::Window& window = renderer.window();
+	window.on_scroll(
+		[&renderer, &view, view_src](double /*offset_x*/, double offset_y)
+		{
+			const auto		cursor = renderer.window().cursor_pos();
+			const auto		size   = renderer.window().window_size();
+			const glm::vec2 frac{static_cast<float>(cursor.first) / static_cast<float>(size.width),
+								 static_cast<float>(cursor.second) / static_cast<float>(size.height)};
+			view.zoom_at(frac, std::pow(0.9F, static_cast<float>(offset_y)));
+			renderer.graph().set(view_src, view.rect());
+		});
+	window.on_cursor_pos(
+		[&renderer, &view, view_src, last_x = 0.0, last_y = 0.0](double pos_x, double pos_y) mutable
+		{
+			if (renderer.window().mouse_held())
+			{
+				const auto	size	= renderer.window().window_size();
+				const float frac_dx = static_cast<float>(pos_x - last_x) / static_cast<float>(size.width);
+				const float frac_dy = static_cast<float>(pos_y - last_y) / static_cast<float>(size.height);
+				view.pan(glm::vec2{-frac_dx, frac_dy});
+				renderer.graph().set(view_src, view.rect());
+			}
+			last_x = pos_x;
+			last_y = pos_y;
+		});
+	window.on_resize(
+		[&renderer, &view, view_src](int width, int height)
+		{
+			if (width > 0 && height > 0)
+			{
+				const float ratio = static_cast<float>(width) / static_cast<float>(height);
+				view.focus(geng::reframe_aspect(view.rect(), ratio));
+				renderer.graph().set(view_src, view.rect());
+			}
+		});
+}
+} // namespace
+
 int main()
 {
 	constexpr float		 X_LIMIT = 2.0F * std::numbers::pi_v<float>;
@@ -32,8 +78,10 @@ int main()
 			std::println("geng: font load failed: {}", geng::to_string(atlas.error()));
 			return 1;
 		}
-		const auto				 sine = demo::sample_sin(bounds, demo::SAMPLE_COUNT);
-		geng::View				 view(demo::fit_bounds(sine));
+		const auto				 sine	   = demo::sample_sin(bounds, demo::SAMPLE_COUNT);
+		const auto				 fb_extent = renderer.window().framebuffer_extent();
+		const float				 aspect	   = static_cast<float>(fb_extent.width) / static_cast<float>(fb_extent.height);
+		geng::View				 view(geng::aspect_fit(demo::fit_bounds(sine), aspect));
 		std::vector<demo::Curve> curves{
 			{.points = sine, .color = demo::SINE_COLOR},
 			{.points = demo::sample_circle(demo::SAMPLE_COUNT), .color = demo::CIRCLE_COLOR}};
@@ -42,36 +90,8 @@ int main()
 		demo::plot_curves(renderer.graph(), renderer.screen(), renderer.scene_image(), renderer.scene_color_format(),
 						  curves_src, view_src, atlas.value());
 
-		// Interactive view control — the windowing stays here in the demo, not the library. Scroll
-		// zooms toward the cursor, left-drag pans. Each input mutates the View and re-sets the graph's
-		// view-rect source, which the OnDemand loop then renders.
-		geng::Window& window = renderer.window();
-		double		  last_x = 0.0;
-		double		  last_y = 0.0;
-		window.on_scroll(
-			[&](double /*offset_x*/, double offset_y)
-			{
-				const auto		cursor = window.cursor_pos();
-				const auto		size   = window.window_size();
-				const glm::vec2 frac{static_cast<float>(cursor.first) / static_cast<float>(size.width),
-									 static_cast<float>(cursor.second) / static_cast<float>(size.height)};
-				view.zoom_at(frac, std::pow(0.9F, static_cast<float>(offset_y)));
-				renderer.graph().set(view_src, view.rect());
-			});
-		window.on_cursor_pos(
-			[&](double pos_x, double pos_y)
-			{
-				if (window.mouse_held())
-				{
-					const auto	size	= window.window_size();
-					const float frac_dx = static_cast<float>(pos_x - last_x) / static_cast<float>(size.width);
-					const float frac_dy = static_cast<float>(pos_y - last_y) / static_cast<float>(size.height);
-					view.pan(glm::vec2{-frac_dx, frac_dy});
-					renderer.graph().set(view_src, view.rect());
-				}
-				last_x = pos_x;
-				last_y = pos_y;
-			});
+		// Interactive view control (scroll-zoom toward cursor, left-drag pan, resize-reframe).
+		install_view_controls(renderer, view, view_src);
 
 		// Stream a new sine sample into the curve every 0.1 s; the reactive graph re-bakes the line
 		// cache live. The view is independent, so the user can pan/zoom to follow the growth.

@@ -58,11 +58,15 @@ class Window
 	/// Register a cursor-move handler (screen coordinates; fired during @ref poll).
 	void on_cursor_pos(std::function<void(double pos_x, double pos_y)> callback);
 
+	/// Register a framebuffer-resize handler (new size in pixels; fired during @ref poll).
+	void on_resize(std::function<void(int width, int height)> callback);
+
 	 private:
 	GLFWwindow*							m_window = nullptr;
 	std::vector<const char*>			m_required_extensions;
 	std::function<void(double, double)> m_scroll;
 	std::function<void(double, double)> m_cursor;
+	std::function<void(int, int)>		m_resize;
 };
 } // namespace geng
 
