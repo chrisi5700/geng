@@ -6,9 +6,11 @@
 #include <geng/FontAtlas.hpp>
 #include <geng/OffscreenRenderer.hpp>
 #include <geng/View.hpp>
+#include <glm/vec2.hpp>
 #include <numbers>
 #include <print>
 #include <string>
+#include <vector>
 
 #include "plot.hpp"
 
@@ -28,16 +30,18 @@ int main()
 	{
 		geng::OffscreenRenderer renderer(WIDTH, HEIGHT);
 		auto					atlas = geng::FontAtlas::create(
-			renderer.context(), std::string(GENG_ASSET_DIR) + "/fonts/FiraCodeNerdFontMono-Regular.ttf", 48.0F);
+			renderer.context(), std::string(GENG_ASSET_DIR) + "/fonts/FiraCodeNerdFontMono-Regular.ttf", 96.0F);
 		if (!atlas.has_value())
 		{
 			std::println("geng: font load failed: {}", geng::to_string(atlas.error()));
 			return 1;
 		}
-		geng::View view(demo::fit_bounds(demo::sample_sin(bounds, demo::SAMPLE_COUNT)));
+		const auto curve	 = demo::sample_sin(bounds, demo::SAMPLE_COUNT);
+		const auto curve_src = renderer.graph().add_source<std::vector<glm::vec2>>(curve);
+		geng::View view(demo::fit_bounds(curve));
 		const auto view_src = renderer.graph().add_source<geng::Bounds2D>(view.rect());
-		demo::plot_sin(renderer.graph(), renderer.screen(), renderer.scene_image(), renderer.scene_color_format(),
-					   bounds, view_src, atlas.value());
+		demo::plot_curve(renderer.graph(), renderer.screen(), renderer.scene_image(), renderer.scene_color_format(),
+						 curve_src, view_src, atlas.value());
 		if (!renderer.capture_png(out_path))
 		{
 			std::println("geng: failed to render {}", out_path);

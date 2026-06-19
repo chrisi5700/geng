@@ -2,6 +2,7 @@
 // window. The scene wiring lives in plot.hpp (shared with the headless PNG demo); this file just
 // opens a window and runs the loop. The public Figure/Plot API comes later.
 
+#include <chrono>
 #include <cmath>
 #include <exception>
 #include <geng/Bounds2D.hpp>
@@ -12,6 +13,7 @@
 #include <numbers>
 #include <print>
 #include <string>
+#include <vector>
 
 #include "plot.hpp"
 
@@ -24,16 +26,18 @@ int main()
 	{
 		geng::Renderer renderer("geng — sin(x)", 1280, 720);
 		auto		   atlas = geng::FontAtlas::create(
-			renderer.context(), std::string(GENG_ASSET_DIR) + "/fonts/FiraCodeNerdFontMono-Regular.ttf", 48.0F);
+			renderer.context(), std::string(GENG_ASSET_DIR) + "/fonts/FiraCodeNerdFontMono-Regular.ttf", 96.0F);
 		if (!atlas.has_value())
 		{
 			std::println("geng: font load failed: {}", geng::to_string(atlas.error()));
 			return 1;
 		}
-		geng::View view(demo::fit_bounds(demo::sample_sin(bounds, demo::SAMPLE_COUNT)));
-		const auto view_src = renderer.graph().add_source<geng::Bounds2D>(view.rect());
-		demo::plot_sin(renderer.graph(), renderer.screen(), renderer.scene_image(), renderer.scene_color_format(),
-					   bounds, view_src, atlas.value());
+		std::vector<glm::vec2> curve	 = demo::sample_sin(bounds, demo::SAMPLE_COUNT);
+		const auto			   curve_src = renderer.graph().add_source<std::vector<glm::vec2>>(curve);
+		geng::View			   view(demo::fit_bounds(curve));
+		const auto			   view_src = renderer.graph().add_source<geng::Bounds2D>(view.rect());
+		demo::plot_curve(renderer.graph(), renderer.screen(), renderer.scene_image(), renderer.scene_color_format(),
+						 curve_src, view_src, atlas.value());
 
 		// Interactive view control — the windowing stays here in the demo, not the library. Scroll
 		// zooms toward the cursor, left-drag pans. Each input mutates the View and re-sets the graph's
@@ -65,7 +69,24 @@ int main()
 				last_x = pos_x;
 				last_y = pos_y;
 			});
-		renderer.run();
+
+		// Stream a new sine sample into the curve every 0.1 s; the reactive graph re-bakes the line
+		// cache live. The view is independent, so the user can pan/zoom to follow the growth.
+		const float step   = (bounds.max_x - bounds.min_x) / static_cast<float>(demo::SAMPLE_COUNT - 1);
+		float		next_x = bounds.max_x + step;
+		auto		last   = std::chrono::steady_clock::now();
+		renderer.run(
+			[&]()
+			{
+				const auto now = std::chrono::steady_clock::now();
+				if (now - last >= std::chrono::milliseconds(100))
+				{
+					last = now;
+					curve.emplace_back(next_x, std::sin(next_x));
+					next_x += step;
+					renderer.graph().set(curve_src, curve);
+				}
+			});
 	}
 	catch (const std::exception& error)
 	{

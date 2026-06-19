@@ -1,5 +1,6 @@
 #include <array>
 #include <chrono>
+#include <functional>
 #include <geng/Renderer.hpp>
 #include <memory>
 #include <stdexcept>
@@ -93,11 +94,15 @@ void Renderer::rebuild_swapchain(veng::rhi::Extent2D extent)
 	m_graph.set(m_screen, m_swap->extent());
 }
 
-void Renderer::run()
+void Renderer::run(const std::function<void()>& tick)
 {
 	while (!m_window.should_close())
 	{
 		Window::poll();
+		if (tick)
+		{
+			tick();
+		}
 
 		const veng::rhi::Extent2D fb_extent = m_window.framebuffer_extent();
 		if (fb_extent.width == 0 || fb_extent.height == 0)

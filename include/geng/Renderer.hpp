@@ -1,6 +1,7 @@
 #ifndef GENG_RENDERER_HPP
 #define GENG_RENDERER_HPP
 
+#include <functional>
 #include <geng/Window.hpp>
 #include <memory>
 #include <mutex>
@@ -61,8 +62,9 @@ class Renderer
 	[[nodiscard]] veng::rhi::Format scene_color_format() const noexcept { return m_scene_color_format; }
 
 	/// Render until the window closes. OnDemand pacing: a frame is produced only when the graph
-	/// changes, so a static plot renders once and then idles.
-	void run();
+	/// changes, so a static plot renders once and then idles. @p tick, if set, runs once per loop
+	/// iteration (after input is polled) — e.g. to stream data into a graph source.
+	void run(const std::function<void()>& tick = {});
 
 	 private:
 	void rebuild_swapchain(veng::rhi::Extent2D extent);

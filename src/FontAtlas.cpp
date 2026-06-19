@@ -14,7 +14,7 @@ namespace geng
 {
 namespace
 {
-constexpr std::uint32_t ATLAS_DIM  = 512;
+constexpr std::uint32_t ATLAS_DIM  = 1024; // large enough for the glyphs at the demo's pixel height
 constexpr int			FIRST_CHAR = 32;
 constexpr int			NUM_CHARS  = 95; // printable ASCII 32..126
 } // namespace

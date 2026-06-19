@@ -290,22 +290,22 @@ inline std::vector<Glyph> build_glyphs(const geng::FontAtlas& font, const geng::
 	return out;
 }
 
-/// Wire a single sin(x) curve and its coordinate axes into @p graph as a raster cache, producing
-/// into @p scene_image.
-inline void plot_sin(veng::graph::Graph& graph, veng::graph::TypedHandle<veng::rhi::Extent2D> screen,
-					 veng::graph::DataHandle scene_image, veng::rhi::Format color_format, const geng::Bounds2D& bounds,
-					 veng::graph::TypedHandle<geng::Bounds2D> view, const geng::FontAtlas& font)
+/// Wire the @p curve point source and its coordinate axes into @p graph as a raster cache, producing
+/// into @p scene_image. The caller owns and drives @p curve, so points can be streamed in over time —
+/// a `set` of the source re-bakes only the line cache (the labels/axes depend on the view, not the curve).
+inline void plot_curve(veng::graph::Graph& graph, veng::graph::TypedHandle<veng::rhi::Extent2D> screen,
+					   veng::graph::DataHandle scene_image, veng::rhi::Format color_format,
+					   veng::graph::TypedHandle<std::vector<glm::vec2>> curve,
+					   veng::graph::TypedHandle<geng::Bounds2D> view, const geng::FontAtlas& font)
 {
 	using namespace veng;
 	using namespace veng::graph;
-
-	const auto curve_src = graph.add_source<std::vector<glm::vec2>>(sample_sin(bounds, SAMPLE_COUNT));
 
 	// Projection and line-list (axes + curve) derive from the view rect, so panning/zooming re-projects
 	// the plot and re-nices the grid/labels; the curve itself stays in data space and is clipped to it.
 	const auto view_proj  = graph.add_transform([](const geng::Bounds2D& bnd) { return geng::ortho_view(bnd); }, view);
 	const auto segments	  = graph.add_transform([](const std::vector<glm::vec2>& pts, const geng::Bounds2D& bnd)
-												{ return build_segments(pts, bnd); }, curve_src, view);
+												{ return build_segments(pts, bnd); }, curve, view);
 	const auto positions  = graph.add_transform([](const Segments& seg) { return seg.positions; }, segments);
 	const auto seg_colors = graph.add_transform([](const Segments& seg) { return seg.colors; }, segments);
 
