@@ -1,0 +1,19 @@
+@PACKAGE_INIT@
+
+# Package config for find_package(geng). Re-finds geng's public dependencies (its exported targets
+# link them — notably veng, co-installed when geng is installed), pulls in the exported targets, and
+# exposes the installed shader/asset directories.
+include(CMakeFindDependencyMacro)
+
+find_dependency(veng)
+find_dependency(glm CONFIG)
+
+include("${CMAKE_CURRENT_LIST_DIR}/gengTargets.cmake")
+
+# Where geng's shipped shaders and bundled assets (the default tick-label font) were installed. geng
+# resolves them via the GENG_SHADER_DIR / GENG_ASSET_DIR environment variables (see Figure.cpp); set
+# those to these paths, or pass your own to FigureDesc, for an installed package.
+set_and_check(geng_SHADER_DIR "@PACKAGE_CMAKE_INSTALL_DATADIR@/geng/shaders")
+set_and_check(geng_ASSET_DIR  "@PACKAGE_CMAKE_INSTALL_DATADIR@/geng/assets")
+
+check_required_components(geng)

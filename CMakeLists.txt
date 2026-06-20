@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.28)
-project(geng)
+project(geng VERSION 0.1.0 LANGUAGES CXX)
 set(CMAKE_CXX_SCAN_FOR_MODULES OFF) # Causes errors with clang-tidy when used with gcc builds.
+
+# Generate install/export rules so a downstream can find_package(geng). Defaults to on only when geng
+# is the top-level project (an add_subdirectory consumer manages its own install).
+option(GENG_INSTALL "Generate geng install and export rules" ${PROJECT_IS_TOP_LEVEL})
 
 # Include CMake modules for target helpers and compiler settings
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
@@ -32,13 +36,18 @@ endif()
 
 # veng is a third-party dependency. Build it with our warnings and sanitizers (so the
 # ASan runtime and flags stay consistent across the link), but do NOT subject its sources
-# to geng's clang-tidy, cppcheck, or coverage — those are our own quality gates, not veng's
-# (veng ships no .clang-tidy, so our strict root config would otherwise govern its code).
+# to geng's clang-tidy, cppcheck, or coverage — veng has its own quality gates (its own
+# .clang-tidy and fix_and_format.sh), so geng's strict root config should not govern its code.
 # veng's target helpers read these cache vars when it defines its targets, so we shadow
 # them OFF for veng's scope only, then restore the cache values for geng's targets below.
 set(ENABLE_CLANG_TIDY OFF)
 set(ENABLE_CPPCHECK OFF)
 set(ENABLE_COVERAGE OFF)
+# When geng installs, veng must install too (geng's exported targets link veng::veng, which has to be
+# in an export set under the same prefix); flip veng's install option on before pulling it in.
+if(GENG_INSTALL)
+    set(VENG_INSTALL ON)
+endif()
 # SYSTEM marks veng's interface include dirs as -isystem for geng's targets, so geng's own
 # -Wall/-Werror, clang-tidy, and cppcheck don't analyse veng's headers when they're pulled into
 # geng translation units (the tooling above only spares veng's *own* compilation).
@@ -51,3 +60,9 @@ add_subdirectory(src)
 add_subdirectory(examples)
 add_subdirectory(bench)
 add_subdirectory(tests)
+
+# Optional Doxygen API docs (doxygen-awesome-css theme). Top-level dev concern only — never built
+# for an add_subdirectory() consumer.
+if(PROJECT_IS_TOP_LEVEL)
+    include(Docs)
+endif()

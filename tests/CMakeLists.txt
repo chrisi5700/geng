@@ -11,3 +11,7 @@ endfunction()
 # Add test executables here, e.g.:
 #   add_test_executable(my_test my_test.cpp TestTypes.hpp)
 #   target_link_libraries(my_test PRIVATE my_lib)
+
+# Public umbrella header compile-guard — fails the build if <geng/geng.hpp> stops compiling standalone.
+add_test_executable(umbrella_test UmbrellaTests.cpp)
+target_link_libraries(umbrella_test PRIVATE geng)

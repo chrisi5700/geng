@@ -58,3 +58,6 @@ geng_figure.png
 # Example render artifacts (PNG frame sequences and stitched video)
 circle_frames/
 *.mp4
+
+# Generated Doxygen API docs
+docs/html/

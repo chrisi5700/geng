@@ -6,6 +6,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <expected>
 #include <geng/Figure.hpp>
 #include <geng/FontAtlas.hpp>
@@ -36,8 +37,20 @@ namespace
 {
 constexpr std::size_t FRAMES_IN_FLIGHT = 2; ///< N-buffering depth (covers a typical host swapchain).
 
-/// Default tick-label font shipped with geng (used when FontSpec::path is empty).
-constexpr std::string_view DEFAULT_FONT = GENG_ASSET_DIR "/fonts/FiraCodeNerdFontMono-Regular.ttf";
+/// geng's bundled shader directory: a `GENG_SHADER_DIR` env override (so an installed package can
+/// relocate it away from the source tree), else the compile-time default baked at build time.
+std::string shader_dir()
+{
+	const char* const env = std::getenv("GENG_SHADER_DIR");
+	return (env != nullptr && *env != '\0') ? std::string(env) : std::string(GENG_SHADER_DIR);
+}
+
+/// geng's bundled asset directory (default tick-label font), with the same `GENG_ASSET_DIR` override.
+std::string asset_dir()
+{
+	const char* const env = std::getenv("GENG_ASSET_DIR");
+	return (env != nullptr && *env != '\0') ? std::string(env) : std::string(GENG_ASSET_DIR);
+}
 } // namespace
 
 using veng::graph::TypedHandle;
@@ -49,7 +62,8 @@ Figure& Figure::operator=(Figure&&) noexcept = default;
 
 std::expected<Figure, Error> Figure::offscreen(const FigureDesc& desc)
 {
-	const std::array<std::string_view, 1> shader_paths{GENG_SHADER_DIR};
+	const std::string					  shader_root = shader_dir();
+	const std::array<std::string_view, 1> shader_paths{shader_root};
 	auto								  ctx_result = veng::Context::create("geng", {}, {}, shader_paths);
 	if (!ctx_result.has_value())
 	{
@@ -60,7 +74,8 @@ std::expected<Figure, Error> Figure::offscreen(const FigureDesc& desc)
 
 std::expected<Figure, Error> Figure::embedded(const VulkanContext& host, const FigureDesc& desc)
 {
-	const std::array<std::string_view, 1> shader_paths{GENG_SHADER_DIR};
+	const std::string					  shader_root = shader_dir();
+	const std::array<std::string_view, 1> shader_paths{shader_root};
 	auto ctx_result = veng::Context::adopt(vk::Instance(host.instance), vk::PhysicalDevice(host.physical_device),
 										   vk::Device(host.device), vk::Queue(host.graphics_queue),
 										   host.graphics_family, shader_paths);
@@ -73,8 +88,9 @@ std::expected<Figure, Error> Figure::embedded(const VulkanContext& host, const F
 
 std::expected<Figure, Error> Figure::build(std::unique_ptr<veng::Context> ctx, const FigureDesc& desc)
 {
-	const std::string font_path = desc.font.path.empty() ? std::string(DEFAULT_FONT) : desc.font.path;
-	auto			  atlas		= FontAtlas::create(*ctx, font_path, desc.font.pixel_height);
+	const std::string font_path =
+		desc.font.path.empty() ? (asset_dir() + "/fonts/FiraCodeNerdFontMono-Regular.ttf") : desc.font.path;
+	auto atlas = FontAtlas::create(*ctx, font_path, desc.font.pixel_height);
 	if (!atlas.has_value())
 	{
 		return std::unexpected(Error::FONT_LOAD_FAILED);

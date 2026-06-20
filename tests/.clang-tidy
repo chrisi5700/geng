@@ -22,7 +22,10 @@ Checks: >
   -readability-magic-numbers
 
 WarningsAsErrors: ''
-HeaderFilterRegex: '.*'
+# Lint test code and test-local headers only — do NOT re-lint the library's public headers a test
+# includes (those are governed by the root .clang-tidy when the library itself is built; re-linting
+# them here would double-analyse them under the test config).
+HeaderFilterRegex: '.*/tests/.*'
 FormatStyle: file
 
 CheckOptions:
