@@ -61,7 +61,7 @@
 - `src/` - Implementation files
 - `tests/` - Unit tests (use Catch2 or similar)
 - `bench/` - Benchmarks (use Google Benchmark)
-- `playground/` - Experimental/prototype code
+- `examples/` - Runnable examples of the public API (headless + windowed)
 - `libs/` - Internal libraries
 - `cmake/` - CMake modules and helpers
 

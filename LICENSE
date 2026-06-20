@@ -1,0 +1,118 @@
+geng License v1.0
+Copyright (c) 2026 Chris <chrisi57001@gmail.com> ("the Licensor")
+
+================================================================================
+Plain-language summary (NOT a substitute for the terms below)
+--------------------------------------------------------------------------------
+- Using geng in an open-source project, or for anything noncommercial (personal,
+  academic, research, evaluation)? Free. Go ahead.
+- Using geng commercially (in a paid or revenue-generating product or service,
+  or inside a for-profit company's operations)? You need a commercial license,
+  which you get EITHER by working out a deal with the Licensor OR by sending the
+  Licensor a video of your CEO doing the Macarena (see Section 3(b)).
+- No warranty. Keep the copyright notice. Be excellent to each other.
+
+This is a SOURCE-AVAILABLE license, not an OSI-approved "open source" license,
+because it restricts commercial use.
+================================================================================
+
+1. DEFINITIONS
+
+   "Software" means the geng library and any other material distributed under
+   this license, including source code, build files, examples, and assets.
+
+   "You" means the individual or legal entity exercising rights under this
+   license.
+
+   "Open Source Project" means a software project whose complete corresponding
+   source code is publicly available and distributed under a license approved by
+   the Open Source Initiative (OSI).
+
+   "Noncommercial Use" means use for personal, educational, academic, research,
+   or evaluation purposes that is not primarily intended for or directed toward
+   commercial advantage or monetary compensation.
+
+   "Commercial Use" means any use that is neither Noncommercial Use nor use
+   within an Open Source Project. This includes, without limitation, use in or
+   for a product or service that is sold, licensed for a fee, hosted for a fee,
+   or otherwise used to generate revenue, and use in the internal business
+   operations of a for-profit entity.
+
+   "Commercial License" means a license to make Commercial Use of the Software,
+   granted under Section 3.
+
+2. GRANT FOR PERMITTED USE
+
+   Subject to the conditions in Section 4, the Licensor grants You a worldwide,
+   royalty-free, non-exclusive license to use, copy, modify, and distribute the
+   Software and works derived from it, SOLELY for:
+
+     (a) Noncommercial Use; and/or
+     (b) incorporation into, and distribution as part of, an Open Source Project.
+
+   No other rights are granted under this Section. In particular, this Section
+   does not permit Commercial Use.
+
+3. COMMERCIAL USE
+
+   Commercial Use of the Software is prohibited unless and until You obtain a
+   Commercial License. The Licensor may grant a Commercial License by EITHER of
+   the following means:
+
+     (a) Negotiated Agreement. You and the Licensor enter into a separate written
+         agreement, on terms mutually agreed, that grants You a Commercial
+         License.
+
+     (b) The Macarena Option. You deliver to the Licensor a genuine, unedited
+         video recording of Your organization's Chief Executive Officer (or, if
+         Your organization has no Chief Executive Officer, its most senior
+         executive officer) performing the Macarena dance, recognizably and in
+         good faith, for a continuous duration of not less than thirty (30)
+         seconds. Upon the Licensor's written acceptance of the recording, the
+         Licensor grants You a perpetual, worldwide, royalty-free Commercial
+         License for the version(s) of the Software identified in that
+         acceptance. The Licensor may accept or decline any submission at the
+         Licensor's sole, absolute, and good-humored discretion. A submission
+         that is not accepted in writing grants no rights.
+
+   To pursue either option, contact the Licensor at chrisi57001@gmail.com.
+
+4. CONDITIONS
+
+   All rights granted under this license are conditioned on Your compliance with
+   the following:
+
+     (a) You must retain, in all copies and substantial portions of the Software,
+         the above copyright notice and this license text.
+
+     (b) If You distribute modified versions, You must mark them as changed and
+         must not misrepresent them as the original Software.
+
+     (c) Distribution under Section 2(b) must occur as part of a project that is
+         and remains an Open Source Project.
+
+5. TERMINATION
+
+   This license and the rights granted under it terminate automatically if You
+   breach it. If the breach is curable, Your rights are reinstated upon cure
+   within thirty (30) days of Your becoming aware of the breach. Sections 6 and 7
+   survive termination.
+
+6. DISCLAIMER OF WARRANTY
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
+
+7. LIMITATION OF LIABILITY
+
+   IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER
+   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM,
+   OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+   SOFTWARE.
+
+================================================================================
+Note: geng depends on third-party components (for example veng, GLFW, glm, and
+others) that are distributed under their own licenses. This license governs geng
+itself, not those components; their terms continue to apply to them.
+================================================================================

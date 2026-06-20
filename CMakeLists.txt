@@ -48,6 +48,6 @@ unset(ENABLE_CPPCHECK)
 unset(ENABLE_COVERAGE)
 
 add_subdirectory(src)
-add_subdirectory(playground)
+add_subdirectory(examples)
 add_subdirectory(bench)
 add_subdirectory(tests)

@@ -4,7 +4,7 @@
 # CMake Starter Template
 
 This repository provides a structured C++ project template using **CMake** and **Nix flakes**.  
-It includes benchmarking, testing, and a dedicated playground for experimentation.
+It includes benchmarking, testing, and runnable examples of the public API.
 
 ---
 
@@ -132,21 +132,16 @@ static void BM_MyFunction(benchmark::State& state) {
 BENCHMARK(BM_MyFunction)->Range(8, 8<<10);
 ```
 
-### `/playground` - Experimentation
+### `/examples` - Examples
 
-Use the `playground/` directory for quick testing and prototyping:
-
-```cpp
-#include <print>
-
-int main() {
-    std::println("Quick test here");
-}
-```
-
-Compile and run:
+The `examples/` directory holds runnable demos of the public API — headless ones
+(render to PNG / a frame sequence) and windowed ones (built behind the
+`geng-glfw` target). Build everything, then run one:
 
 ```sh
 cmake --build build
-./build/playground/playground
+# headless: writes a PNG frame sequence, then prints an ffmpeg command to stitch an mp4
+./build/examples/circle_video
+# windowed (needs a display): scroll to zoom, drag to pan
+./build/examples/lissajous
 ```
