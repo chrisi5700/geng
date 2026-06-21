@@ -62,6 +62,11 @@ unset(ENABLE_COVERAGE)
 add_subdirectory(src)
 add_subdirectory(examples)
 add_subdirectory(bench)
+
+# Enable testing at the top level so `ctest` run from the build root recurses into tests/
+# (catch_discover_tests registers there). Without this the root CTestTestfile is empty and CI's
+# `ctest --test-dir build/<preset>` reports "No tests were found".
+enable_testing()
 add_subdirectory(tests)
 
 # Optional Doxygen API docs (doxygen-awesome-css theme). Top-level dev concern only — never built
