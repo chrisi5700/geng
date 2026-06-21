@@ -34,13 +34,14 @@ jobs:
             # The Vulkan loader/driver leak via libdbus at exit; geng's ctest is device-free so this is
             # belt-and-suspenders. UBSan aborts on the first error (llm-vcpkg sets -fno-sanitize-recover).
             test_env: "ASAN_OPTIONS=detect_leaks=0 UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1"
-          # Second compiler, warnings-as-errors. dev-vcpkg has no sanitizers; the -D override turns the
-          # warning gate on. Clang 19+ is required: clang-18 gates libstdc++'s std::expected off.
+          # Second compiler, pure warnings-as-errors compile gate. The dev preset enables ASan/UBSan,
+          # but clang's sanitizer runtime isn't installed on the runner and the GCC lane already covers
+          # sanitizers — so turn them off here. Clang 19+ is required: clang-18 gates std::expected off.
           - label: "Clang 19 -Werror"
             preset: dev-vcpkg
             cc: clang-19
             cxx: clang++-19
-            cmake_extra: "-D TREAT_WARNINGS_AS_ERRORS=ON -D ENABLE_CLANG_TIDY=OFF -D ENABLE_CPPCHECK=OFF -D ENABLE_COVERAGE=OFF"
+            cmake_extra: "-D TREAT_WARNINGS_AS_ERRORS=ON -D ENABLE_SANITIZER_ADDRESS=OFF -D ENABLE_SANITIZER_UNDEFINED=OFF -D ENABLE_CLANG_TIDY=OFF -D ENABLE_CPPCHECK=OFF -D ENABLE_COVERAGE=OFF"
     env:
       # vcpkg is cloned at a pinned commit (the one geng/veng are developed against) so CI resolves the
       # exact dependency versions that build locally.
