@@ -79,6 +79,20 @@ struct MarkerStyle
 
 	friend bool operator==(const MarkerStyle&, const MarkerStyle&) = default;
 };
+
+/// Per-series style for a bar chart. Each data point `(x, y)` is one bar: an axis-aligned rectangle
+/// centred on `x`, spanning from @ref baseline to `y`, and @ref width wide — all measured in *data*
+/// units (so bars scale with the view, unlike the pixel-sized markers). An empty @ref color resolves
+/// like @ref LineStyle; per-point colors from @ref Figure::set_point_colors override it.
+struct BarStyle
+{
+	std::optional<glm::vec4> color;
+	float					 width	  = 0.8F; ///< Bar width in data-x units (leaves a gap if < the spacing).
+	float					 baseline = 0.0F; ///< The value every bar grows from (its foot).
+	bool					 visible  = true;
+
+	friend bool operator==(const BarStyle&, const BarStyle&) = default;
+};
 } // namespace geng
 
 #endif // GENG_SERIES_HPP

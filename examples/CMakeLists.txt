@@ -22,6 +22,7 @@ endfunction()
 geng_add_headless_example(figure_png)
 geng_add_headless_example(circle_video)
 geng_add_headless_example(mandelbrot)
+geng_add_headless_example(d20_advantage)
 
 # --- windowed examples (need a surface + the geng-glfw front-end) ---
 if(NOT GENG_BUILD_WINDOW)

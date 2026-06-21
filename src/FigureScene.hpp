@@ -113,6 +113,35 @@ struct Scatter
 	friend bool operator==(const Scatter&, const Scatter&) = default;
 };
 
+/// One bar as the GPU sees it: an axis-aligned rectangle in *data* space, `[x_center ± half_width] ×
+/// [y0, y1]`. std430 layout (matches `Bar` in shaders/bar.vert.slang): four floats @0..12, then @ref
+/// color @16 — a tight 32-byte stride. The bar vertex shader projects the four corners directly, so
+/// (unlike a marker) nothing here is in pixels.
+struct alignas(16) BarInstance
+{
+	float	  x_center	 = 0.0F;
+	float	  half_width = 0.0F;
+	float	  y0		 = 0.0F; ///< Foot of the bar (the baseline).
+	float	  y1		 = 0.0F; ///< Head of the bar (the value).
+	glm::vec4 color;			 ///< Straight-alpha RGBA.
+
+	friend bool operator==(const BarInstance&, const BarInstance&) = default;
+};
+static_assert(sizeof(BarInstance) == 32, "BarInstance must match the std430 stride in bar.vert.slang");
+
+/// A resolved bar series: data-space points `(x, value)`, the bar geometry, and the colors. @ref colors
+/// is either empty (every bar uses @ref color) or one entry per bar (a per-point override).
+struct Bars
+{
+	std::vector<glm::vec2> points;
+	std::vector<glm::vec4> colors;
+	glm::vec4			   color; ///< Fallback when @ref colors is empty.
+	float				   width	= 0.0F;
+	float				   baseline = 0.0F;
+
+	friend bool operator==(const Bars&, const Bars&) = default;
+};
+
 inline float nice_step(float range, int target)
 {
 	if (range <= 0.0F || target <= 0)
@@ -326,6 +355,69 @@ inline std::vector<MarkerInstance> build_markers(const std::vector<Scatter>& sca
 	return out;
 }
 
+/// The per-series fallback color for a bar: same resolution order as @ref resolve_color (explicit,
+/// then palette by creation order, then the theme default). Per-bar colors override this in sync_scene.
+inline glm::vec4 resolve_bar_color(const BarStyle& style, std::uint64_t order, const Theme& theme)
+{
+	if (style.color.has_value())
+	{
+		return *style.color;
+	}
+	if (!theme.palette.empty())
+	{
+		return theme.palette[order % theme.palette.size()];
+	}
+	if (theme.line_defaults.color.has_value())
+	{
+		return *theme.line_defaults.color;
+	}
+	return glm::vec4{0.30F, 0.80F, 1.00F, 1.0F};
+}
+
+/// Flatten the resolved bar series into one instance buffer for a single batched draw — every bar
+/// across every bar series becomes one @ref BarInstance (a data-space rectangle). A bar takes its own
+/// color when the series carries a per-point list, else the series' resolved fallback color.
+inline std::vector<BarInstance> build_bars(const std::vector<Bars>& series)
+{
+	std::vector<BarInstance> out;
+	const std::size_t		 total =
+		std::accumulate(series.begin(), series.end(), std::size_t{0},
+						[](std::size_t acc, const Bars& bars) { return acc + bars.points.size(); });
+	out.reserve(total);
+
+	for (const Bars& bars : series)
+	{
+		const float half	  = bars.width * 0.5F;
+		const bool	per_point = bars.colors.size() == bars.points.size();
+		for (std::size_t idx = 0; idx < bars.points.size(); ++idx)
+		{
+			out.push_back(BarInstance{.x_center	  = bars.points[idx].x,
+									  .half_width = half,
+									  .y0		  = bars.baseline,
+									  .y1		  = bars.points[idx].y,
+									  .color	  = per_point ? bars.colors[idx] : bars.color});
+		}
+	}
+	return out;
+}
+
+/// The corner points a bar series contributes to the figure's data bounds: each bar widens the
+/// x-extent by its half-width and pins the y-extent to include both the baseline (the foot) and its
+/// value. Returned as owned points so @ref Figure::data_bounds can fold them through @ref bounds_of
+/// like any other series — a bar chart whose bars stop short of y=0 still frames the baseline.
+inline std::vector<glm::vec2> bar_extent_points(const std::vector<glm::vec2>& bars, float width, float baseline)
+{
+	std::vector<glm::vec2> out;
+	out.reserve(bars.size() * 2);
+	const float half = width * 0.5F;
+	for (const glm::vec2& bar : bars)
+	{
+		out.emplace_back(bar.x - half, baseline);
+		out.emplace_back(bar.x + half, bar.y);
+	}
+	return out;
+}
+
 /// Axis-aligned bounds of every span of points, padded by a small margin (a unit box if empty).
 inline Bounds2D bounds_of(std::span<const std::span<const glm::vec2>> series_points)
 {
@@ -401,13 +493,11 @@ inline Bounds2D follow_bounds(std::span<const std::span<const glm::vec2>> series
 
 /// Wire the bake + text + composite pipeline into @p graph from the four sources, returning the
 /// scene-image handle the composite produces.
-inline veng::graph::DataHandle wire_scene(veng::graph::Graph&									graph,
-										  veng::graph::TypedHandle<veng::rhi::Extent2D>			screen,
-										  veng::graph::TypedHandle<Bounds2D>					view,
-										  veng::graph::TypedHandle<Theme>						theme,
-										  veng::graph::TypedHandle<std::vector<Curve>>			curves,
-										  veng::graph::TypedHandle<std::vector<MarkerInstance>> markers,
-										  const feng::FontAtlas& font, const Theme& initial)
+inline veng::graph::DataHandle wire_scene(
+	veng::graph::Graph& graph, veng::graph::TypedHandle<veng::rhi::Extent2D> screen,
+	veng::graph::TypedHandle<Bounds2D> view, veng::graph::TypedHandle<Theme> theme,
+	veng::graph::TypedHandle<std::vector<Curve>> curves, veng::graph::TypedHandle<std::vector<MarkerInstance>> markers,
+	veng::graph::TypedHandle<std::vector<BarInstance>> bars, const feng::FontAtlas& font, const Theme& initial)
 {
 	using namespace veng;
 	using namespace veng::graph;
@@ -476,18 +566,35 @@ inline veng::graph::DataHandle wire_scene(veng::graph::Graph&									graph,
 		.blend(true);
 	graph.set_producer(marker_cache, graph.add(std::move(marker_node)));
 
+	// Bar charts: one batched instanced draw of every bar (axis-aligned rectangles in data space, so
+	// just the view_proj is pushed — no pixel sizing). Like the markers it clears transparent and
+	// blends, compositing over the plot but under markers and labels; zero bars => a cleared no-op layer.
+	const DataHandle bars_ref = graph.add(std::make_unique<ValueData<gpu::BufferRef>>(gpu::BufferRef{}));
+	graph.set_producer(bars_ref, graph.add(std::make_unique<nodes::StorageBufferNode>(bars, "bars", bars_ref)));
+
+	const DataHandle bar_cache = graph.add(std::make_unique<ValueData<gpu::ImageRef>>(gpu::ImageRef{}));
+	auto bar_node = std::make_unique<nodes::GraphicsNode>("bar.vert", "bar.frag", rhi::Format::RGBA8_UNORM,
+														  rhi::Format::UNDEFINED, 6, bake_extent, bar_cache);
+	bar_node->add_storage_buffer(bars_ref)
+		.set_instances_from(bars_ref)
+		.push_constant<glm::mat4>(view_proj, rhi::ShaderStage::VERTEX)
+		.clear_color({0.0F, 0.0F, 0.0F, 0.0F})
+		.blend(true);
+	graph.set_producer(bar_cache, graph.add(std::move(bar_node)));
+
 	// Tick-label text: geng lays the glyph instances out (build_glyphs) and feng wires the subgraph
 	// that uploads them, samples the atlas, and rasterises a transparent text layer at the bake size.
 	const auto		 glyph_data = graph.add_transform([&font](const Theme& thm, const Bounds2D& bnd)
 													  { return build_glyphs(thm, bnd, font); }, theme, view);
 	const DataHandle text_cache = feng::add_text_layer(graph, glyph_data, font.atlas_ref(), view_proj, bake_extent);
 
-	// Composite the supersampled layers back to front and resolve onto the screen: opaque plot, then
-	// the marker layer, then the labels (the display sampler downsamples each cache for the SSAA).
+	// Composite the supersampled layers back to front and resolve onto the screen: opaque plot, then the
+	// bar layer, the marker layer, and the labels (the display sampler downsamples each cache for SSAA).
 	const DataHandle scene_image = graph.add(std::make_unique<ValueData<gpu::ImageRef>>(gpu::ImageRef{}));
 	auto display = std::make_unique<nodes::GraphicsNode>("fullscreen.vert", "display.frag", rhi::Format::RGBA8_UNORM,
 														 rhi::Format::UNDEFINED, 3, screen, scene_image);
 	display->add_sampled_image(baked_plot, "plot")
+		.add_sampled_image(bar_cache, "bars")
 		.add_sampled_image(marker_cache, "markers")
 		.add_sampled_image(text_cache, "text");
 	graph.set_producer(scene_image, graph.add(std::move(display)));

@@ -104,9 +104,10 @@ std::expected<Figure, Error> Figure::build(std::unique_ptr<veng::Context> ctx, c
 	}
 
 	Figure fig;
-	fig.m_theme	   = desc.theme;
-	fig.m_view	   = View(desc.initial_view);
-	fig.m_ctx	   = std::move(ctx);
+	fig.m_theme		   = desc.theme;
+	fig.m_equal_aspect = desc.equal_aspect;
+	fig.m_view		   = View(desc.initial_view);
+	fig.m_ctx		   = std::move(ctx);
 	fig.m_pool	   = std::make_unique<veng::ResourcePool>(fig.m_ctx->device(), fig.m_ctx->rhi(), fig.m_ctx->allocator(),
 														  FRAMES_IN_FLIGHT);
 	fig.m_commands = std::make_unique<veng::CommandManager>(*fig.m_ctx);
@@ -122,14 +123,16 @@ std::expected<Figure, Error> Figure::build(std::unique_ptr<veng::Context> ctx, c
 	const auto theme_src   = graph.add_source<Theme>(desc.theme);
 	const auto curves_src  = graph.add_source<std::vector<detail::Curve>>({});
 	const auto markers_src = graph.add_source<std::vector<detail::MarkerInstance>>({});
+	const auto bars_src	   = graph.add_source<std::vector<detail::BarInstance>>({});
 
 	fig.m_screen	  = screen.handle;
 	fig.m_view_src	  = view_src.handle;
 	fig.m_theme_src	  = theme_src.handle;
 	fig.m_curves_src  = curves_src.handle;
 	fig.m_markers_src = markers_src.handle;
-	fig.m_scene_image =
-		detail::wire_scene(graph, screen, view_src, theme_src, curves_src, markers_src, *fig.m_font, desc.theme);
+	fig.m_bars_src	  = bars_src.handle;
+	fig.m_scene_image = detail::wire_scene(graph, screen, view_src, theme_src, curves_src, markers_src, bars_src,
+										   *fig.m_font, desc.theme);
 	return fig;
 }
 
@@ -159,9 +162,28 @@ SeriesId Figure::add_scatter(std::string name, MarkerStyle style)
 	return SeriesId{key};
 }
 
+SeriesId Figure::add_bar(std::string name, BarStyle style)
+{
+	const std::uint64_t key = m_next_id++;
+	SeriesData			data;
+	data.name = std::move(name);
+	data.kind = SeriesKind::BAR;
+	data.bar  = style;
+	m_series.emplace(key, std::move(data));
+	m_order.push_back(key);
+	m_scene_dirty = true;
+	return SeriesId{key};
+}
+
 bool Figure::is_visible(const SeriesData& series) noexcept
 {
-	return series.kind == SeriesKind::SCATTER ? series.marker.visible : series.line.visible;
+	switch (series.kind)
+	{
+		case SeriesKind::SCATTER: return series.marker.visible;
+		case SeriesKind::BAR: return series.bar.visible;
+		case SeriesKind::LINE: break;
+	}
+	return series.line.visible;
 }
 
 void Figure::append(SeriesId series, std::span<const glm::vec2> points)
@@ -225,6 +247,15 @@ void Figure::set_style(SeriesId series, const MarkerStyle& style)
 	}
 }
 
+void Figure::set_style(SeriesId series, const BarStyle& style)
+{
+	if (auto it = m_series.find(series.value()); it != m_series.end())
+	{
+		it->second.bar = style;
+		m_scene_dirty  = true;
+	}
+}
+
 void Figure::set_name(SeriesId series, const std::string& name)
 {
 	if (auto it = m_series.find(series.value()); it != m_series.end())
@@ -250,13 +281,29 @@ const View& Figure::view() const noexcept
 
 Bounds2D Figure::data_bounds() const noexcept
 {
+	// Bar series contribute their rectangle extents (half-width on x, baseline on y), not their raw
+	// points — built into `owned` storage that must outlive the spans, so reserve it up front to keep
+	// the emplaced spans valid (no reallocation invalidating an earlier bar's view).
+	std::vector<std::vector<glm::vec2>> owned;
+	owned.reserve(m_order.size());
 	std::vector<std::span<const glm::vec2>> spans;
 	spans.reserve(m_order.size());
 	for (const std::uint64_t key : m_order)
 	{
-		if (const auto it = m_series.find(key); it != m_series.end() && is_visible(it->second))
+		const auto it = m_series.find(key);
+		if (it == m_series.end() || !is_visible(it->second))
 		{
-			spans.emplace_back(it->second.points);
+			continue;
+		}
+		const SeriesData& data = it->second;
+		if (data.kind == SeriesKind::BAR)
+		{
+			owned.push_back(detail::bar_extent_points(data.points, data.bar.width, data.bar.baseline));
+			spans.emplace_back(owned.back());
+		}
+		else
+		{
+			spans.emplace_back(data.points);
 		}
 	}
 	return detail::bounds_of(spans);
@@ -322,6 +369,16 @@ const Theme& Figure::theme() const noexcept
 	return m_theme;
 }
 
+void Figure::set_equal_aspect(bool enabled) noexcept
+{
+	m_equal_aspect = enabled;
+}
+
+bool Figure::equal_aspect() const noexcept
+{
+	return m_equal_aspect;
+}
+
 void Figure::sync_scene()
 {
 	if (m_fit == Fit::ALL)
@@ -337,10 +394,11 @@ void Figure::sync_scene()
 		return;
 	}
 	// Split the visible series by kind: line series feed the polyline bake (build_segments runs in the
-	// graph), scatter series resolve here into the batched marker buffer. The palette index is the
-	// series' creation order (key - 1), shared across both kinds so colors stay stable.
+	// graph), scatter and bar series resolve here into their batched instance buffers. The palette index
+	// is the series' creation order (key - 1), shared across all kinds so colors stay stable.
 	std::vector<detail::Curve>	 curves;
 	std::vector<detail::Scatter> scatters;
+	std::vector<detail::Bars>	 bars;
 	for (const std::uint64_t key : m_order)
 	{
 		const auto it = m_series.find(key);
@@ -349,23 +407,33 @@ void Figure::sync_scene()
 			continue;
 		}
 		const SeriesData& data = it->second;
-		if (data.kind == SeriesKind::SCATTER)
+		switch (data.kind)
 		{
-			scatters.push_back(detail::Scatter{.points	= data.points,
-											   .colors	= data.point_colors,
-											   .color	= detail::resolve_marker_color(data.marker, key - 1U, m_theme),
-											   .shape	= data.marker.shape,
-											   .size_px = data.marker.size_px,
-											   .thickness_px = data.marker.thickness_px});
-		}
-		else
-		{
-			curves.push_back(
-				detail::Curve{.points = data.points, .color = detail::resolve_color(data.line, key - 1U, m_theme)});
+			case SeriesKind::SCATTER:
+				scatters.push_back(
+					detail::Scatter{.points		  = data.points,
+									.colors		  = data.point_colors,
+									.color		  = detail::resolve_marker_color(data.marker, key - 1U, m_theme),
+									.shape		  = data.marker.shape,
+									.size_px	  = data.marker.size_px,
+									.thickness_px = data.marker.thickness_px});
+				break;
+			case SeriesKind::BAR:
+				bars.push_back(detail::Bars{.points	  = data.points,
+											.colors	  = data.point_colors,
+											.color	  = detail::resolve_bar_color(data.bar, key - 1U, m_theme),
+											.width	  = data.bar.width,
+											.baseline = data.bar.baseline});
+				break;
+			case SeriesKind::LINE:
+				curves.push_back(
+					detail::Curve{.points = data.points, .color = detail::resolve_color(data.line, key - 1U, m_theme)});
+				break;
 		}
 	}
 	m_graph->set(TypedHandle<std::vector<detail::Curve>>{m_curves_src}, std::move(curves));
 	m_graph->set(TypedHandle<std::vector<detail::MarkerInstance>>{m_markers_src}, detail::build_markers(scatters));
+	m_graph->set(TypedHandle<std::vector<detail::BarInstance>>{m_bars_src}, detail::build_bars(bars));
 	m_graph->set(TypedHandle<Theme>{m_theme_src}, m_theme);
 	m_scene_dirty = false;
 }
@@ -378,8 +446,10 @@ bool Figure::ensure_device_sized(std::uint32_t width, std::uint32_t height)
 	}
 	const float aspect = static_cast<float>(width) / static_cast<float>(height);
 	m_graph->set(TypedHandle<veng::rhi::Extent2D>{m_screen}, veng::rhi::Extent2D{.width = width, .height = height});
-	// Project the aspect-corrected view so a unit circle renders round at any target size.
-	m_graph->set(TypedHandle<Bounds2D>{m_view_src}, aspect_fit(m_view.rect(), aspect));
+	// Equal aspect grows the view so a unit circle renders round at any target size; otherwise the raw
+	// view rect maps straight onto the viewport (each axis fills independently — bar charts want this).
+	const Bounds2D projected = m_equal_aspect ? aspect_fit(m_view.rect(), aspect) : m_view.rect();
+	m_graph->set(TypedHandle<Bounds2D>{m_view_src}, projected);
 	return true;
 }
 

@@ -72,6 +72,9 @@ struct FigureDesc
 	Theme	 theme = Theme::dark();
 	FontSpec font;
 	Bounds2D initial_view{.min_x = -1.0F, .max_x = 1.0F, .min_y = -1.0F, .max_y = 1.0F};
+	/// Keep one data unit the same on-screen length on both axes (circles round). Off fills the viewport
+	/// per axis — the right default for bar charts / distributions (see @ref Figure::set_equal_aspect).
+	bool equal_aspect = true;
 };
 
 /// Host Vulkan objects geng adopts for the embedded path (e.g. from `QVulkanInstance` /
@@ -124,17 +127,22 @@ class Figure
 	/// @ref add_line; per-point colors (e.g. a colormap) are supplied separately via @ref set_point_colors.
 	[[nodiscard]] SeriesId add_scatter(std::string name, MarkerStyle style = {});
 
+	/// Add a bar series: each point `(x, y)` becomes one @ref BarStyle bar (data-unit rectangle from the
+	/// baseline to `y`). Bar charts usually want @ref set_equal_aspect off so the bars fill the plot.
+	[[nodiscard]] SeriesId add_bar(std::string name, BarStyle style = {});
+
 	void append(SeriesId series, std::span<const glm::vec2> points); ///< Streaming append; no-op if invalid.
 	void set_data(SeriesId series, std::vector<glm::vec2> points);
-	/// Per-point colors for a scatter series — one entry per point, overriding the series color (the
-	/// path the Mandelbrot example uses). An empty vector clears the override; a length that does not
-	/// match the point count is ignored at sync time and the series color is used instead.
+	/// Per-point colors for a scatter or bar series — one entry per point, overriding the series color
+	/// (the path the Mandelbrot example uses). An empty vector clears the override; a length that does
+	/// not match the point count is ignored at sync time and the series color is used instead.
 	void set_point_colors(SeriesId series, std::vector<glm::vec4> colors);
 	void remove(SeriesId series);
 	void clear();
 
 	void					  set_style(SeriesId series, const LineStyle& style);
 	void					  set_style(SeriesId series, const MarkerStyle& style);
+	void					  set_style(SeriesId series, const BarStyle& style);
 	void					  set_name(SeriesId series, const std::string& name);
 	[[nodiscard]] bool		  contains(SeriesId series) const noexcept;
 	[[nodiscard]] std::size_t series_count() const noexcept;
@@ -157,6 +165,13 @@ class Figure
 
 	void					   set_theme(const Theme& new_theme);
 	[[nodiscard]] const Theme& theme() const noexcept;
+
+	/// Equal-aspect framing: when on (the default), the view is grown to the viewport aspect so one data
+	/// unit is the same length on both axes (circles stay round). Turn it off for charts whose axes carry
+	/// unrelated units — bar charts, distributions — so the view fills the viewport on each axis
+	/// independently and the data is not squashed. Takes effect on the next render.
+	void			   set_equal_aspect(bool enabled) noexcept;
+	[[nodiscard]] bool equal_aspect() const noexcept;
 
 	// --- targets -------------------------------------------------------------------------------
 
@@ -194,16 +209,18 @@ class Figure
 	enum class SeriesKind : std::uint8_t
 	{
 		LINE,
-		SCATTER
+		SCATTER,
+		BAR
 	};
 	struct SeriesData
 	{
 		std::string			   name;
 		std::vector<glm::vec2> points;
-		std::vector<glm::vec4> point_colors; ///< Per-point scatter colors (empty => use the marker color).
+		std::vector<glm::vec4> point_colors; ///< Per-point scatter/bar colors (empty => use the series color).
 		SeriesKind			   kind = SeriesKind::LINE;
 		LineStyle			   line;   ///< Live when @ref kind is LINE.
 		MarkerStyle			   marker; ///< Live when @ref kind is SCATTER.
+		BarStyle			   bar;	   ///< Live when @ref kind is BAR.
 	};
 	/// Whether @p series is currently drawn (reads the visibility of its live style).
 	[[nodiscard]] static bool					  is_visible(const SeriesData& series) noexcept;
@@ -215,6 +232,7 @@ class Figure
 	Fit	  m_fit			 = Fit::OFF;
 	float m_follow_width = 0.0F; ///< x-window width frozen when Fit::FOLLOW_LATEST is enabled.
 	bool  m_scene_dirty	 = true;
+	bool  m_equal_aspect = true; ///< Grow the view to the viewport aspect (round circles) vs. fill per axis.
 
 	// --- GPU realization (veng-backed; forward-declared, held by pointer — named collaborators) ---
 	std::unique_ptr<veng::Context>			m_ctx; ///< Owned (offscreen) or adopting (embedded).
@@ -230,6 +248,7 @@ class Figure
 	veng::graph::DataHandle m_theme_src;   ///< source<Theme>
 	veng::graph::DataHandle m_curves_src;  ///< source<std::vector<Curve>>
 	veng::graph::DataHandle m_markers_src; ///< source<std::vector<MarkerInstance>>
+	veng::graph::DataHandle m_bars_src;	   ///< source<std::vector<BarInstance>>
 	veng::graph::DataHandle m_scene_image; ///< the composited scene the graph produces
 };
 } // namespace geng

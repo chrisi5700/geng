@@ -21,3 +21,8 @@ target_link_libraries(umbrella_test PRIVATE geng)
 add_test_executable(scatter_test ScatterTests.cpp)
 target_link_libraries(scatter_test PRIVATE geng)
 target_include_directories(scatter_test PRIVATE ${geng_SOURCE_DIR}/src)
+
+# Bar renderer CPU side (build_bars / bar_extent_points / resolve_bar_color). Same white-box setup.
+add_test_executable(bar_test BarTests.cpp)
+target_link_libraries(bar_test PRIVATE geng)
+target_include_directories(bar_test PRIVATE ${geng_SOURCE_DIR}/src)
