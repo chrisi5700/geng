@@ -120,12 +120,21 @@ class Figure
 	/// Add a line series. Color resolves from @p style, else the theme palette, else the default.
 	[[nodiscard]] SeriesId add_line(std::string name, LineStyle style = {});
 
+	/// Add a scatter series: the @ref MarkerStyle symbol stamped at every point. Color resolves like
+	/// @ref add_line; per-point colors (e.g. a colormap) are supplied separately via @ref set_point_colors.
+	[[nodiscard]] SeriesId add_scatter(std::string name, MarkerStyle style = {});
+
 	void append(SeriesId series, std::span<const glm::vec2> points); ///< Streaming append; no-op if invalid.
 	void set_data(SeriesId series, std::vector<glm::vec2> points);
+	/// Per-point colors for a scatter series — one entry per point, overriding the series color (the
+	/// path the Mandelbrot example uses). An empty vector clears the override; a length that does not
+	/// match the point count is ignored at sync time and the series color is used instead.
+	void set_point_colors(SeriesId series, std::vector<glm::vec4> colors);
 	void remove(SeriesId series);
 	void clear();
 
 	void					  set_style(SeriesId series, const LineStyle& style);
+	void					  set_style(SeriesId series, const MarkerStyle& style);
 	void					  set_name(SeriesId series, const std::string& name);
 	[[nodiscard]] bool		  contains(SeriesId series) const noexcept;
 	[[nodiscard]] std::size_t series_count() const noexcept;
@@ -181,12 +190,23 @@ class Figure
 	[[nodiscard]] Bounds2D follow_bounds() const;
 
 	// --- scene model (the figure's own state) ---
+	/// Which renderer a series drives. The style member matching the kind is the live one.
+	enum class SeriesKind : std::uint8_t
+	{
+		LINE,
+		SCATTER
+	};
 	struct SeriesData
 	{
 		std::string			   name;
 		std::vector<glm::vec2> points;
-		LineStyle			   style;
+		std::vector<glm::vec4> point_colors; ///< Per-point scatter colors (empty => use the marker color).
+		SeriesKind			   kind = SeriesKind::LINE;
+		LineStyle			   line;   ///< Live when @ref kind is LINE.
+		MarkerStyle			   marker; ///< Live when @ref kind is SCATTER.
 	};
+	/// Whether @p series is currently drawn (reads the visibility of its live style).
+	[[nodiscard]] static bool					  is_visible(const SeriesData& series) noexcept;
 	std::unordered_map<std::uint64_t, SeriesData> m_series;
 	std::vector<std::uint64_t>					  m_order;		 ///< Creation order, for palette cycling.
 	std::uint64_t								  m_next_id = 1; ///< Monotonic; never recycled.
@@ -209,6 +229,7 @@ class Figure
 	veng::graph::DataHandle m_view_src;	   ///< source<Bounds2D>
 	veng::graph::DataHandle m_theme_src;   ///< source<Theme>
 	veng::graph::DataHandle m_curves_src;  ///< source<std::vector<Curve>>
+	veng::graph::DataHandle m_markers_src; ///< source<std::vector<MarkerInstance>>
 	veng::graph::DataHandle m_scene_image; ///< the composited scene the graph produces
 };
 } // namespace geng

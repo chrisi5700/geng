@@ -21,6 +21,7 @@ endfunction()
 
 geng_add_headless_example(figure_png)
 geng_add_headless_example(circle_video)
+geng_add_headless_example(mandelbrot)
 
 # --- windowed examples (need a surface + the geng-glfw front-end) ---
 if(NOT GENG_BUILD_WINDOW)
@@ -39,3 +40,4 @@ geng_add_example(growing_sine)
 geng_add_example(lissajous)
 geng_add_example(live_signals)
 geng_add_example(function_explorer)
+geng_add_example(scatter_shapes)

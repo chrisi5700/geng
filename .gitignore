@@ -55,6 +55,7 @@ build
 # Ignore geng's generated render output
 geng_sin.png
 geng_figure.png
+geng_mandelbrot.png
 # Example render artifacts (PNG frame sequences and stitched video)
 circle_frames/
 *.mp4

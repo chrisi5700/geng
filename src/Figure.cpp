@@ -116,17 +116,20 @@ std::expected<Figure, Error> Figure::build(std::unique_ptr<veng::Context> ctx, c
 	fig.m_graph = std::make_unique<veng::graph::Graph>();
 	fig.m_font	= std::make_unique<feng::FontAtlas>(std::move(atlas.value()));
 
-	auto&	   graph	  = *fig.m_graph;
-	const auto screen	  = graph.add_source<veng::rhi::Extent2D>(veng::rhi::Extent2D{.width = 1, .height = 1});
-	const auto view_src	  = graph.add_source<Bounds2D>(desc.initial_view);
-	const auto theme_src  = graph.add_source<Theme>(desc.theme);
-	const auto curves_src = graph.add_source<std::vector<detail::Curve>>({});
+	auto&	   graph	   = *fig.m_graph;
+	const auto screen	   = graph.add_source<veng::rhi::Extent2D>(veng::rhi::Extent2D{.width = 1, .height = 1});
+	const auto view_src	   = graph.add_source<Bounds2D>(desc.initial_view);
+	const auto theme_src   = graph.add_source<Theme>(desc.theme);
+	const auto curves_src  = graph.add_source<std::vector<detail::Curve>>({});
+	const auto markers_src = graph.add_source<std::vector<detail::MarkerInstance>>({});
 
 	fig.m_screen	  = screen.handle;
 	fig.m_view_src	  = view_src.handle;
 	fig.m_theme_src	  = theme_src.handle;
 	fig.m_curves_src  = curves_src.handle;
-	fig.m_scene_image = detail::wire_scene(graph, screen, view_src, theme_src, curves_src, *fig.m_font, desc.theme);
+	fig.m_markers_src = markers_src.handle;
+	fig.m_scene_image =
+		detail::wire_scene(graph, screen, view_src, theme_src, curves_src, markers_src, *fig.m_font, desc.theme);
 	return fig;
 }
 
@@ -134,12 +137,31 @@ SeriesId Figure::add_line(std::string name, LineStyle style)
 {
 	const std::uint64_t key = m_next_id++;
 	SeriesData			data;
-	data.name  = std::move(name);
-	data.style = style;
+	data.name = std::move(name);
+	data.kind = SeriesKind::LINE;
+	data.line = style;
 	m_series.emplace(key, std::move(data));
 	m_order.push_back(key);
 	m_scene_dirty = true;
 	return SeriesId{key};
+}
+
+SeriesId Figure::add_scatter(std::string name, MarkerStyle style)
+{
+	const std::uint64_t key = m_next_id++;
+	SeriesData			data;
+	data.name	= std::move(name);
+	data.kind	= SeriesKind::SCATTER;
+	data.marker = style;
+	m_series.emplace(key, std::move(data));
+	m_order.push_back(key);
+	m_scene_dirty = true;
+	return SeriesId{key};
+}
+
+bool Figure::is_visible(const SeriesData& series) noexcept
+{
+	return series.kind == SeriesKind::SCATTER ? series.marker.visible : series.line.visible;
 }
 
 void Figure::append(SeriesId series, std::span<const glm::vec2> points)
@@ -157,6 +179,15 @@ void Figure::set_data(SeriesId series, std::vector<glm::vec2> points)
 	{
 		it->second.points = std::move(points);
 		m_scene_dirty	  = true;
+	}
+}
+
+void Figure::set_point_colors(SeriesId series, std::vector<glm::vec4> colors)
+{
+	if (auto it = m_series.find(series.value()); it != m_series.end())
+	{
+		it->second.point_colors = std::move(colors);
+		m_scene_dirty			= true;
 	}
 }
 
@@ -180,8 +211,17 @@ void Figure::set_style(SeriesId series, const LineStyle& style)
 {
 	if (auto it = m_series.find(series.value()); it != m_series.end())
 	{
-		it->second.style = style;
-		m_scene_dirty	 = true;
+		it->second.line = style;
+		m_scene_dirty	= true;
+	}
+}
+
+void Figure::set_style(SeriesId series, const MarkerStyle& style)
+{
+	if (auto it = m_series.find(series.value()); it != m_series.end())
+	{
+		it->second.marker = style;
+		m_scene_dirty	  = true;
 	}
 }
 
@@ -214,7 +254,7 @@ Bounds2D Figure::data_bounds() const noexcept
 	spans.reserve(m_order.size());
 	for (const std::uint64_t key : m_order)
 	{
-		if (const auto it = m_series.find(key); it != m_series.end() && it->second.style.visible)
+		if (const auto it = m_series.find(key); it != m_series.end() && is_visible(it->second))
 		{
 			spans.emplace_back(it->second.points);
 		}
@@ -228,7 +268,7 @@ Bounds2D Figure::follow_bounds() const
 	spans.reserve(m_order.size());
 	for (const std::uint64_t key : m_order)
 	{
-		if (const auto it = m_series.find(key); it != m_series.end() && it->second.style.visible)
+		if (const auto it = m_series.find(key); it != m_series.end() && is_visible(it->second))
 		{
 			spans.emplace_back(it->second.points);
 		}
@@ -296,19 +336,36 @@ void Figure::sync_scene()
 	{
 		return;
 	}
-	std::vector<detail::Curve> curves;
-	curves.reserve(m_order.size());
+	// Split the visible series by kind: line series feed the polyline bake (build_segments runs in the
+	// graph), scatter series resolve here into the batched marker buffer. The palette index is the
+	// series' creation order (key - 1), shared across both kinds so colors stay stable.
+	std::vector<detail::Curve>	 curves;
+	std::vector<detail::Scatter> scatters;
 	for (const std::uint64_t key : m_order)
 	{
 		const auto it = m_series.find(key);
-		if (it == m_series.end() || !it->second.style.visible)
+		if (it == m_series.end() || !is_visible(it->second))
 		{
 			continue;
 		}
-		curves.push_back(detail::Curve{.points = it->second.points,
-									   .color  = detail::resolve_color(it->second.style, key - 1U, m_theme)});
+		const SeriesData& data = it->second;
+		if (data.kind == SeriesKind::SCATTER)
+		{
+			scatters.push_back(detail::Scatter{.points	= data.points,
+											   .colors	= data.point_colors,
+											   .color	= detail::resolve_marker_color(data.marker, key - 1U, m_theme),
+											   .shape	= data.marker.shape,
+											   .size_px = data.marker.size_px,
+											   .thickness_px = data.marker.thickness_px});
+		}
+		else
+		{
+			curves.push_back(
+				detail::Curve{.points = data.points, .color = detail::resolve_color(data.line, key - 1U, m_theme)});
+		}
 	}
 	m_graph->set(TypedHandle<std::vector<detail::Curve>>{m_curves_src}, std::move(curves));
+	m_graph->set(TypedHandle<std::vector<detail::MarkerInstance>>{m_markers_src}, detail::build_markers(scatters));
 	m_graph->set(TypedHandle<Theme>{m_theme_src}, m_theme);
 	m_scene_dirty = false;
 }

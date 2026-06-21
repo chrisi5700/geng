@@ -51,6 +51,34 @@ struct LineStyle
 
 	friend bool operator==(const LineStyle&, const LineStyle&) = default;
 };
+
+/// The symbol drawn at each point of a scatter series. Every shape is rasterised from a signed
+/// distance field in `shaders/marker.frag.slang`, so the constant values here are the contract with
+/// that shader — keep them in sync (the order matches `SHAPE_*` there).
+enum class MarkerShape : std::uint8_t
+{
+	POINT,	 ///< Filled disc.
+	CIRCLE,	 ///< Hollow ring (outline only; @ref MarkerStyle::thickness_px wide).
+	SQUARE,	 ///< Filled axis-aligned square.
+	DIAMOND, ///< Filled square rotated 45°.
+	CROSS,	 ///< Diagonal ✕ strokes (@ref MarkerStyle::thickness_px wide).
+	PLUS,	 ///< Upright ✚ strokes (@ref MarkerStyle::thickness_px wide).
+	TRIANGLE ///< Filled upward equilateral triangle.
+};
+
+/// Per-series style for a scatter plot (one @ref MarkerShape stamped at every data point). An empty
+/// @ref color resolves the same way as @ref LineStyle (palette by creation order, then the default);
+/// it is the fallback when a point has no explicit color from @ref Figure::set_point_colors.
+struct MarkerStyle
+{
+	std::optional<glm::vec4> color;
+	MarkerShape				 shape	 = MarkerShape::POINT;
+	float					 size_px = 8.0F; ///< On-screen marker bounding size in pixels (resize-stable).
+	float thickness_px				 = 1.5F; ///< Stroke width in pixels for the hollow shapes (CIRCLE / CROSS / PLUS).
+	bool  visible					 = true;
+
+	friend bool operator==(const MarkerStyle&, const MarkerStyle&) = default;
+};
 } // namespace geng
 
 #endif // GENG_SERIES_HPP

@@ -24,6 +24,7 @@
 #include <glm/vec4.hpp>
 #include <iterator>
 #include <memory>
+#include <numeric>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -67,6 +68,49 @@ struct Segments
 	std::vector<glm::vec4> colors;
 
 	friend bool operator==(const Segments&, const Segments&) = default;
+};
+
+/// One scatter point as the GPU sees it. The memory layout is std430 (matches `Marker` in
+/// shaders/marker.vert.slang): @ref center @0, @ref size_px @8, @ref thickness_px @12, @ref color
+/// @16, @ref shape @32, then 12 bytes of pad so the stride is a 48-byte multiple of 16. @ref size_px
+/// and @ref thickness_px are already scaled to the *bake* resolution (× @ref SUPERSAMPLE).
+struct alignas(16) MarkerInstance
+{
+	glm::vec2	  center;			   ///< Data-space position; the vertex shader projects it.
+	float		  size_px	   = 0.0F; ///< Bounding size in bake pixels.
+	float		  thickness_px = 0.0F; ///< Stroke width in bake pixels (hollow shapes only).
+	glm::vec4	  color;			   ///< Straight-alpha RGBA.
+	std::uint32_t shape = 0;		   ///< @ref geng::MarkerShape value (see shader `SHAPE_*`).
+	std::uint32_t pad0	= 0;
+	std::uint32_t pad1	= 0;
+	std::uint32_t pad2	= 0;
+
+	friend bool operator==(const MarkerInstance&, const MarkerInstance&) = default;
+};
+static_assert(sizeof(MarkerInstance) == 48, "MarkerInstance must match the std430 stride in marker.vert.slang");
+
+/// Matches `PushData` in shaders/marker.vert.slang (std430: mat4 @0, vec2 @64).
+struct MarkerUniforms
+{
+	glm::mat4 view_proj;
+	glm::vec2 extent; ///< Bake framebuffer size in pixels.
+
+	friend bool operator==(const MarkerUniforms&, const MarkerUniforms&) noexcept = default;
+};
+
+/// A resolved scatter series: data-space points plus the style needed to stamp a marker at each.
+/// @ref colors is either empty (every point uses @ref color) or one entry per point (an explicit
+/// per-point color from @ref Figure::set_point_colors — the path the Mandelbrot example drives).
+struct Scatter
+{
+	std::vector<glm::vec2> points;
+	std::vector<glm::vec4> colors;
+	glm::vec4			   color; ///< Fallback when @ref colors is empty.
+	MarkerShape			   shape		= MarkerShape::POINT;
+	float				   size_px		= 0.0F; ///< On-screen size (bake-scaled later, in build_markers).
+	float				   thickness_px = 0.0F;
+
+	friend bool operator==(const Scatter&, const Scatter&) = default;
 };
 
 inline float nice_step(float range, int target)
@@ -231,6 +275,57 @@ inline glm::vec4 resolve_color(const LineStyle& style, std::uint64_t order, cons
 	return glm::vec4{0.30F, 0.80F, 1.00F, 1.0F};
 }
 
+/// The per-series fallback color for a scatter marker: same resolution order as @ref resolve_color
+/// (explicit, then palette by creation order, then the theme default). Per-point colors, when set,
+/// override this in `Figure::sync_scene`.
+inline glm::vec4 resolve_marker_color(const MarkerStyle& style, std::uint64_t order, const Theme& theme)
+{
+	if (style.color.has_value())
+	{
+		return *style.color;
+	}
+	if (!theme.palette.empty())
+	{
+		return theme.palette[order % theme.palette.size()];
+	}
+	if (theme.line_defaults.color.has_value())
+	{
+		return *theme.line_defaults.color;
+	}
+	return glm::vec4{0.30F, 0.80F, 1.00F, 1.0F};
+}
+
+/// Flatten the resolved scatter series into one instance buffer for a single batched draw — every
+/// marker across every scatter series becomes one @ref MarkerInstance. Sizes are scaled to the bake
+/// resolution here (× @ref SUPERSAMPLE) so the on-screen px the caller asked for survives the SSAA
+/// downsample. A point takes its own color when the series carries a per-point list, else the
+/// series' resolved fallback color.
+inline std::vector<MarkerInstance> build_markers(const std::vector<Scatter>& scatters)
+{
+	std::vector<MarkerInstance> out;
+	const std::size_t			total =
+		std::accumulate(scatters.begin(), scatters.end(), std::size_t{0},
+						[](std::size_t acc, const Scatter& scatter) { return acc + scatter.points.size(); });
+	out.reserve(total);
+
+	for (const Scatter& scatter : scatters)
+	{
+		const float			size	  = scatter.size_px * static_cast<float>(SUPERSAMPLE);
+		const float			thickness = scatter.thickness_px * static_cast<float>(SUPERSAMPLE);
+		const std::uint32_t shape	  = static_cast<std::uint32_t>(scatter.shape);
+		const bool			per_point = scatter.colors.size() == scatter.points.size();
+		for (std::size_t idx = 0; idx < scatter.points.size(); ++idx)
+		{
+			out.push_back(MarkerInstance{.center	   = scatter.points[idx],
+										 .size_px	   = size,
+										 .thickness_px = thickness,
+										 .color		   = per_point ? scatter.colors[idx] : scatter.color,
+										 .shape		   = shape});
+		}
+	}
+	return out;
+}
+
 /// Axis-aligned bounds of every span of points, padded by a small margin (a unit box if empty).
 inline Bounds2D bounds_of(std::span<const std::span<const glm::vec2>> series_points)
 {
@@ -306,11 +401,12 @@ inline Bounds2D follow_bounds(std::span<const std::span<const glm::vec2>> series
 
 /// Wire the bake + text + composite pipeline into @p graph from the four sources, returning the
 /// scene-image handle the composite produces.
-inline veng::graph::DataHandle wire_scene(veng::graph::Graph&							graph,
-										  veng::graph::TypedHandle<veng::rhi::Extent2D> screen,
-										  veng::graph::TypedHandle<Bounds2D>			view,
-										  veng::graph::TypedHandle<Theme>				theme,
-										  veng::graph::TypedHandle<std::vector<Curve>>	curves,
+inline veng::graph::DataHandle wire_scene(veng::graph::Graph&									graph,
+										  veng::graph::TypedHandle<veng::rhi::Extent2D>			screen,
+										  veng::graph::TypedHandle<Bounds2D>					view,
+										  veng::graph::TypedHandle<Theme>						theme,
+										  veng::graph::TypedHandle<std::vector<Curve>>			curves,
+										  veng::graph::TypedHandle<std::vector<MarkerInstance>> markers,
 										  const feng::FontAtlas& font, const Theme& initial)
 {
 	using namespace veng;
@@ -353,16 +449,47 @@ inline veng::graph::DataHandle wire_scene(veng::graph::Graph&							graph,
 		.clear_color({initial.background.r, initial.background.g, initial.background.b, initial.background.a});
 	graph.set_producer(baked_plot, graph.add(std::move(bake)));
 
+	// Scatter markers: one batched instanced draw of every point across every scatter series
+	// (build_markers flattened them into a single buffer in sync_scene). Each instance is an
+	// SDF-shaded quad sized in pixels; the layer clears transparent and blends, so it composites over
+	// the line/grid plot but under the tick labels. The draw emits zero instances (a cleared, no-op
+	// layer) when there are no scatter series — the marker node is always wired in.
+	const DataHandle markers_ref = graph.add(std::make_unique<ValueData<gpu::BufferRef>>(gpu::BufferRef{}));
+	graph.set_producer(markers_ref,
+					   graph.add(std::make_unique<nodes::StorageBufferNode>(markers, "markers", markers_ref)));
+
+	const auto marker_uniforms = graph.add_transform(
+		[](const glm::mat4& proj, const rhi::Extent2D& size)
+		{
+			return MarkerUniforms{.view_proj = proj,
+								  .extent = glm::vec2(static_cast<float>(size.width), static_cast<float>(size.height))};
+		},
+		view_proj, bake_extent);
+
+	const DataHandle marker_cache = graph.add(std::make_unique<ValueData<gpu::ImageRef>>(gpu::ImageRef{}));
+	auto marker_node = std::make_unique<nodes::GraphicsNode>("marker.vert", "marker.frag", rhi::Format::RGBA8_UNORM,
+															 rhi::Format::UNDEFINED, 6, bake_extent, marker_cache);
+	marker_node->add_storage_buffer(markers_ref)
+		.set_instances_from(markers_ref)
+		.push_constant<MarkerUniforms>(marker_uniforms, rhi::ShaderStage::VERTEX)
+		.clear_color({0.0F, 0.0F, 0.0F, 0.0F})
+		.blend(true);
+	graph.set_producer(marker_cache, graph.add(std::move(marker_node)));
+
 	// Tick-label text: geng lays the glyph instances out (build_glyphs) and feng wires the subgraph
 	// that uploads them, samples the atlas, and rasterises a transparent text layer at the bake size.
 	const auto		 glyph_data = graph.add_transform([&font](const Theme& thm, const Bounds2D& bnd)
 													  { return build_glyphs(thm, bnd, font); }, theme, view);
 	const DataHandle text_cache = feng::add_text_layer(graph, glyph_data, font.atlas_ref(), view_proj, bake_extent);
 
+	// Composite the supersampled layers back to front and resolve onto the screen: opaque plot, then
+	// the marker layer, then the labels (the display sampler downsamples each cache for the SSAA).
 	const DataHandle scene_image = graph.add(std::make_unique<ValueData<gpu::ImageRef>>(gpu::ImageRef{}));
 	auto display = std::make_unique<nodes::GraphicsNode>("fullscreen.vert", "display.frag", rhi::Format::RGBA8_UNORM,
 														 rhi::Format::UNDEFINED, 3, screen, scene_image);
-	display->add_sampled_image(baked_plot, "plot").add_sampled_image(text_cache, "text");
+	display->add_sampled_image(baked_plot, "plot")
+		.add_sampled_image(marker_cache, "markers")
+		.add_sampled_image(text_cache, "text");
 	graph.set_producer(scene_image, graph.add(std::move(display)));
 	return scene_image;
 }

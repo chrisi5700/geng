@@ -15,3 +15,9 @@ endfunction()
 # Public umbrella header compile-guard — fails the build if <geng/geng.hpp> stops compiling standalone.
 add_test_executable(umbrella_test UmbrellaTests.cpp)
 target_link_libraries(umbrella_test PRIVATE geng)
+
+# Scatter renderer CPU side (build_markers / resolve_marker_color). Device-free; reaches the internal
+# scene header in src/ for white-box coverage of the marker instance assembly.
+add_test_executable(scatter_test ScatterTests.cpp)
+target_link_libraries(scatter_test PRIVATE geng)
+target_include_directories(scatter_test PRIVATE ${geng_SOURCE_DIR}/src)
