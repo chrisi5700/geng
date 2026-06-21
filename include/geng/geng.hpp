@@ -12,7 +12,6 @@
 
 #include <geng/Bounds2D.hpp>
 #include <geng/Figure.hpp>
-#include <geng/FontAtlas.hpp>
 #include <geng/Interactor.hpp>
 #include <geng/Series.hpp>
 #include <geng/Theme.hpp>

@@ -8,8 +8,9 @@
 #include <cstdint>
 #include <cstdlib>
 #include <expected>
+#include <feng/FontAtlas.hpp>
+#include <feng/TextGraph.hpp> // feng::shader_dir()
 #include <geng/Figure.hpp>
-#include <geng/FontAtlas.hpp>
 #include <glm/vec2.hpp>
 #include <memory>
 #include <span>
@@ -62,8 +63,11 @@ Figure& Figure::operator=(Figure&&) noexcept = default;
 
 std::expected<Figure, Error> Figure::offscreen(const FigureDesc& desc)
 {
-	const std::string					  shader_root = shader_dir();
-	const std::array<std::string_view, 1> shader_paths{shader_root};
+	// geng's own shaders (line/grid/fullscreen/composite) plus feng's (text.vert/text.frag) — both
+	// directories go on the Context's Slang search path so every GraphicsNode resolves its .slang files.
+	const std::string					  geng_shaders = shader_dir();
+	const std::string					  feng_shaders = feng::shader_dir();
+	const std::array<std::string_view, 2> shader_paths{geng_shaders, feng_shaders};
 	auto								  ctx_result = veng::Context::create("geng", {}, {}, shader_paths);
 	if (!ctx_result.has_value())
 	{
@@ -74,8 +78,11 @@ std::expected<Figure, Error> Figure::offscreen(const FigureDesc& desc)
 
 std::expected<Figure, Error> Figure::embedded(const VulkanContext& host, const FigureDesc& desc)
 {
-	const std::string					  shader_root = shader_dir();
-	const std::array<std::string_view, 1> shader_paths{shader_root};
+	// geng's own shaders (line/grid/fullscreen/composite) plus feng's (text.vert/text.frag) — both
+	// directories go on the Context's Slang search path so every GraphicsNode resolves its .slang files.
+	const std::string					  geng_shaders = shader_dir();
+	const std::string					  feng_shaders = feng::shader_dir();
+	const std::array<std::string_view, 2> shader_paths{geng_shaders, feng_shaders};
 	auto ctx_result = veng::Context::adopt(vk::Instance(host.instance), vk::PhysicalDevice(host.physical_device),
 										   vk::Device(host.device), vk::Queue(host.graphics_queue),
 										   host.graphics_family, shader_paths);
@@ -90,7 +97,7 @@ std::expected<Figure, Error> Figure::build(std::unique_ptr<veng::Context> ctx, c
 {
 	const std::string font_path =
 		desc.font.path.empty() ? (asset_dir() + "/fonts/FiraCodeNerdFontMono-Regular.ttf") : desc.font.path;
-	auto atlas = FontAtlas::create(*ctx, font_path, desc.font.pixel_height);
+	auto atlas = feng::FontAtlas::create(*ctx, font_path, desc.font.pixel_height);
 	if (!atlas.has_value())
 	{
 		return std::unexpected(Error::FONT_LOAD_FAILED);
@@ -107,7 +114,7 @@ std::expected<Figure, Error> Figure::build(std::unique_ptr<veng::Context> ctx, c
 	fig.m_headless =
 		std::make_unique<veng::HeadlessExecutor>(*fig.m_ctx, *fig.m_pool, *fig.m_commands, *fig.m_scheduler);
 	fig.m_graph = std::make_unique<veng::graph::Graph>();
-	fig.m_font	= std::make_unique<FontAtlas>(std::move(atlas.value()));
+	fig.m_font	= std::make_unique<feng::FontAtlas>(std::move(atlas.value()));
 
 	auto&	   graph	  = *fig.m_graph;
 	const auto screen	  = graph.add_source<veng::rhi::Extent2D>(veng::rhi::Extent2D{.width = 1, .height = 1});

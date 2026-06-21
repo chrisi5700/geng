@@ -11,22 +11,21 @@
 # override at runtime (see Figure.cpp) so an installed package can relocate them.
 
 find_package(glm CONFIG REQUIRED)
-find_package(Stb REQUIRED) # stb_truetype, for the font atlas
 
 target_add_library(geng)
 target_sources(geng PRIVATE
-        Bounds2D.cpp Window.cpp FontAtlas.cpp StbTrueTypeImpl.cpp
+        Bounds2D.cpp Window.cpp
         Theme.cpp Figure.cpp Interactor.cpp)
 target_include_directories(geng PUBLIC $<BUILD_INTERFACE:${geng_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)
-# SYSTEM: stb is not -Wall/clang-tidy/cppcheck clean — keep its header out of geng's analysis.
-target_include_directories(geng SYSTEM PRIVATE ${Stb_INCLUDE_DIR})
 target_compile_definitions(geng PUBLIC GLM_FORCE_DEPTH_ZERO_TO_ONE)
 target_compile_definitions(geng PRIVATE GENG_SHADER_DIR="${geng_SOURCE_DIR}/shaders")
 # GENG_ASSET_DIR lets Figure resolve its bundled default tick-label font by absolute path.
 target_compile_definitions(geng PRIVATE GENG_ASSET_DIR="${geng_SOURCE_DIR}/assets")
 target_compile_features(geng PUBLIC cxx_std_23)
 # veng::veng is veng's umbrella target: one link carries the whole engine and its usage requirements.
-target_link_libraries(geng PUBLIC glm::glm veng::veng)
+# feng::feng is the text-rendering library (font atlas + glyph layout + text render-graph wiring); the
+# tick-label text geng draws goes through it. feng links veng::veng transitively.
+target_link_libraries(geng PUBLIC glm::glm veng::veng feng::feng)
 add_library(geng::geng ALIAS geng)
 
 # geng-glfw — the optional GLFW windowed front-end (WindowApp). It owns a window + swapchain and

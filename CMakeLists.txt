@@ -28,30 +28,33 @@ set(ENABLE_CCACHE OFF CACHE BOOL "Enable ccache for faster rebuilds")
 # Consumed via add_subdirectory: because geng is the top-level project, veng sees
 # PROJECT_IS_TOP_LEVEL=OFF and so builds only its libraries — its example apps, test
 # suite, and docs stay off. Added before our own targets so they can link veng_* libs.
-if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/libs/veng/CMakeLists.txt")
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/libs/veng/CMakeLists.txt"
+   OR NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/libs/feng/CMakeLists.txt")
     message(FATAL_ERROR
-        "libs/veng is missing — initialize submodules with:\n"
+        "libs/veng or libs/feng is missing — initialize submodules with:\n"
         "  git submodule update --init --recursive")
 endif()
 
-# veng is a third-party dependency. Build it with our warnings and sanitizers (so the
-# ASan runtime and flags stay consistent across the link), but do NOT subject its sources
-# to geng's clang-tidy, cppcheck, or coverage — veng has its own quality gates (its own
-# .clang-tidy and fix_and_format.sh), so geng's strict root config should not govern its code.
-# veng's target helpers read these cache vars when it defines its targets, so we shadow
-# them OFF for veng's scope only, then restore the cache values for geng's targets below.
+# veng (render-graph backend) and feng (text rendering, which depends on veng) are third-party
+# dependencies. Build them with our warnings and sanitizers (so the ASan runtime and flags stay
+# consistent across the link), but do NOT subject their sources to geng's clang-tidy, cppcheck, or
+# coverage — each has its own quality gates. Their target helpers read these cache vars when defining
+# targets, so we shadow them OFF for their scope only, then restore the cache values for geng below.
 set(ENABLE_CLANG_TIDY OFF)
 set(ENABLE_CPPCHECK OFF)
 set(ENABLE_COVERAGE OFF)
-# When geng installs, veng must install too (geng's exported targets link veng::veng, which has to be
-# in an export set under the same prefix); flip veng's install option on before pulling it in.
+# When geng installs, veng and feng must install too (geng's exported targets link veng::veng and
+# feng::feng, which have to be in export sets under the same prefix); flip their install options on.
 if(GENG_INSTALL)
     set(VENG_INSTALL ON)
+    set(FENG_INSTALL ON)
 endif()
-# SYSTEM marks veng's interface include dirs as -isystem for geng's targets, so geng's own
-# -Wall/-Werror, clang-tidy, and cppcheck don't analyse veng's headers when they're pulled into
-# geng translation units (the tooling above only spares veng's *own* compilation).
+# SYSTEM marks their interface include dirs as -isystem for geng's targets, so geng's own -Wall/-Werror,
+# clang-tidy, and cppcheck don't analyse their headers when pulled into geng translation units (the
+# tooling above only spares each library's *own* compilation). veng is added first so feng (and geng)
+# can link veng::veng; feng then reuses that one veng target instead of building its vendored copy.
 add_subdirectory(libs/veng SYSTEM)
+add_subdirectory(libs/feng SYSTEM)
 unset(ENABLE_CLANG_TIDY)
 unset(ENABLE_CPPCHECK)
 unset(ENABLE_COVERAGE)

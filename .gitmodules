@@ -1,3 +1,6 @@
 [submodule "libs/veng"]
 	path = libs/veng
 	url = https://github.com/chrisi5700/veng.git
+[submodule "libs/feng"]
+	path = libs/feng
+	url = git@github.com:chrisi5700/feng.git

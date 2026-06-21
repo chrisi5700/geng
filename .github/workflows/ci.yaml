@@ -2,116 +2,145 @@ name: CI
 
 on:
   push:
-    branches: [main]
-    paths:
-      - 'src/**'
-      - 'tests/**'
-      - 'bench/**'
-      - 'examples/**'
-      - 'include/**'
-      - 'cmake/**'
-      - 'CMakeLists.txt'
-      - 'CMakePresets.json'
-      - 'vcpkg.json'
-      - '.github/workflows/**'
+    branches: ["**"]
   pull_request:
-    branches: [main]
-    paths:
-      - 'src/**'
-      - 'tests/**'
-      - 'bench/**'
-      - 'examples/**'
-      - 'include/**'
-      - 'cmake/**'
-      - 'CMakeLists.txt'
-      - 'CMakePresets.json'
-      - 'vcpkg.json'
-      - '.github/workflows/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same ref cancels an in-flight run for it.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  format-check:
-    runs-on: ubuntu-latest
+  build-test:
+    name: ${{ matrix.label }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Primary safety gate (CLAUDE.md/README): sanitizers + warnings-as-errors + tests.
+          # clang-tidy/cppcheck/coverage are turned off in CI — they are version-sensitive and stay
+          # local/advisory gates (fix_and_format.sh); CI enforces compile + sanitizers + tests.
+          - label: "ASan+UBSan (GCC)"
+            preset: llm-vcpkg
+            cc: gcc-14
+            cxx: g++-14
+            cmake_extra: "-D ENABLE_CLANG_TIDY=OFF -D ENABLE_CPPCHECK=OFF -D ENABLE_COVERAGE=OFF"
+            # The Vulkan loader/driver leak via libdbus at exit; geng's ctest is device-free so this is
+            # belt-and-suspenders. UBSan aborts on the first error (llm-vcpkg sets -fno-sanitize-recover).
+            test_env: "ASAN_OPTIONS=detect_leaks=0 UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1"
+          # Second compiler, warnings-as-errors. dev-vcpkg has no sanitizers; the -D override turns the
+          # warning gate on. Clang 19+ is required: clang-18 gates libstdc++'s std::expected off.
+          - label: "Clang 19 -Werror"
+            preset: dev-vcpkg
+            cc: clang-19
+            cxx: clang++-19
+            cmake_extra: "-D TREAT_WARNINGS_AS_ERRORS=ON -D ENABLE_CLANG_TIDY=OFF -D ENABLE_CPPCHECK=OFF -D ENABLE_COVERAGE=OFF"
+    env:
+      # vcpkg is cloned at a pinned commit (the one geng/veng are developed against) so CI resolves the
+      # exact dependency versions that build locally.
+      VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+      VCPKG_COMMIT: 22d9c655dc24ad24c6cac27607005e619ce46740
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/.cache/vcpkg
+      # Slang is not a vcpkg port; it is fetched from the Khronos release page (most portable glibc build).
+      SLANG_VERSION: "2026.10"
+      SLANG_PREFIX: ${{ github.workspace }}/.slang
+      DEBIAN_FRONTEND: noninteractive
+      CC: ${{ matrix.cc }}
+      CXX: ${{ matrix.cxx }}
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive   # libs/veng and libs/feng (and feng's nested libs/veng)
 
-      - name: Install clang-format
+      - name: Install system packages
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq clang-format
+          set -euo pipefail
+          sudo apt-get update
+          # Vulkan loader/headers + lavapipe (software ICD); GLFW build deps (vcpkg builds glfw3 from
+          # source — needs X11/xorg); slang download deps; both toolchains (the matrix selects one).
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build pkg-config ca-certificates curl tar \
+            gcc-14 g++-14 clang-19 clang-tools-19 \
+            libvulkan-dev vulkan-tools libvulkan1 mesa-vulkan-drivers \
+            xorg-dev libxkbcommon-dev libwayland-dev wayland-protocols libwayland-bin \
+            libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libgl1-mesa-dev \
+            autoconf automake libtool
+          lvp="$(ls /usr/share/vulkan/icd.d/lvp_icd*.json 2>/dev/null | head -1 || true)"
+          if [ -n "$lvp" ]; then
+            echo "VK_ICD_FILENAMES=$lvp" >> "$GITHUB_ENV"
+            echo "VK_DRIVER_FILES=$lvp"  >> "$GITHUB_ENV"
+          else
+            echo "::warning::lavapipe ICD not found under /usr/share/vulkan/icd.d"
+          fi
 
+      - name: Install CMake + Ninja (recent)
+        uses: lukka/get-cmake@latest
+
+      - name: Install Slang ${{ env.SLANG_VERSION }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$SLANG_PREFIX"
+          url="https://github.com/shader-slang/slang/releases/download/v${SLANG_VERSION}/slang-${SLANG_VERSION}-linux-x86_64-glibc-2.27.tar.gz"
+          echo "Downloading $url"
+          curl -fsSL --retry 3 "$url" -o /tmp/slang.tar.gz
+          tar -xzf /tmp/slang.tar.gz -C "$SLANG_PREFIX"
+          cfg="$(find "$SLANG_PREFIX" \( -name 'slangConfig.cmake' -o -name 'slang-config.cmake' \) | head -1)"
+          lib="$(find "$SLANG_PREFIX" -name 'libslang.so*' | head -1)"
+          if [ -z "$cfg" ] || [ -z "$lib" ]; then
+            echo "::error::slang cmake config or libslang.so not found after extraction"; exit 1
+          fi
+          echo "slang_DIR=$(dirname "$cfg")"                             >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$(dirname "$lib"):${LD_LIBRARY_PATH:-}"  >> "$GITHUB_ENV"
+
+      - name: Cache vcpkg binary archives
+        uses: actions/cache@v5
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-${{ runner.os }}-${{ matrix.cc }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-${{ runner.os }}-${{ matrix.cc }}-${{ env.VCPKG_COMMIT }}-
+            vcpkg-${{ runner.os }}-${{ matrix.cc }}-
+
+      - name: Set up vcpkg @ pinned commit
+        run: |
+          set -euo pipefail
+          mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
+          if [ ! -d "$VCPKG_ROOT/.git" ]; then
+            git clone https://github.com/microsoft/vcpkg "$VCPKG_ROOT"
+          fi
+          git -C "$VCPKG_ROOT" fetch --depth 1 origin "$VCPKG_COMMIT"
+          git -C "$VCPKG_ROOT" checkout --detach "$VCPKG_COMMIT"
+          "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics
+
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }} -D "slang_DIR=$slang_DIR" ${{ matrix.cmake_extra }}
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }}
+
+      - name: Test
+        run: ${{ matrix.test_env }} ctest --test-dir build/${{ matrix.preset }} --output-on-failure -j 2
+
+  format-check:
+    name: clang-format
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6   # superproject only; submodules have their own format gates
+      - name: Install clang-format (pinned to match local dev)
+        run: pipx install "clang-format==22.1.5"
       - name: Check formatting
         run: |
-          find src tests \( -name "*.cpp" -o -name "*.hpp" \) | \
-            xargs clang-format --dry-run --Werror
-
-  clang:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: lukka/get-cmake@latest
-      - uses: lukka/run-vcpkg@v11
-        with:
-          vcpkgGitCommitId: '6d7bf7ef2193e2d1c5798a5ff8811d533104c861'
-
-      - name: Install Clang + analysis tools
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq clang clang-tidy cppcheck
-
-      - uses: lukka/run-cmake@v10
-        with:
-          configurePreset: dev-vcpkg
-          configurePresetAdditionalArgs: >
-            ["-DCMAKE_CXX_COMPILER=clang++",
-             "-DENABLE_CLANG_TIDY=ON",
-             "-DENABLE_CPPCHECK=ON"]
-          buildPreset: dev-vcpkg
-
-      - name: Test
-        run: ctest --test-dir build/dev-vcpkg --output-on-failure
-
-  gcc-coverage:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: lukka/get-cmake@latest
-      - uses: lukka/run-vcpkg@v11
-        with:
-          vcpkgGitCommitId: '6d7bf7ef2193e2d1c5798a5ff8811d533104c861'
-
-      - name: Install GCC + lcov
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq gcc g++ lcov
-
-      - uses: lukka/run-cmake@v10
-        with:
-          configurePreset: dev-vcpkg
-          configurePresetAdditionalArgs: >
-            ["-DCMAKE_CXX_COMPILER=g++"]
-          buildPreset: dev-vcpkg
-
-      - name: Run tests + coverage
-        run: ./run_test.sh build/dev-vcpkg example_test
-
-   #    - name: Upload coverage
-   #      uses: coverallsapp/github-action@v2
-   #      with:
-   #        github-token: ${{ secrets.GITHUB_TOKEN }}
-   #        file: build/dev-vcpkg/coverage_filtered.info
-
-  msvc:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: lukka/get-cmake@latest
-      - uses: lukka/run-vcpkg@v11
-        with:
-          vcpkgGitCommitId: '6d7bf7ef2193e2d1c5798a5ff8811d533104c861'
-
-      - uses: lukka/run-cmake@v10
-        with:
-          configurePreset: dev-vcpkg-msvc
-          buildPreset: dev-vcpkg-msvc
-
-      - name: Test
-        run: ctest --test-dir build/dev-vcpkg-msvc --output-on-failure
+          set -euo pipefail
+          # git ls-files does not descend into submodules, so libs/veng and libs/feng are excluded.
+          files="$(git ls-files '*.cpp' '*.hpp' '*.h')"
+          echo "$files"
+          echo "$files" | xargs clang-format --dry-run --Werror

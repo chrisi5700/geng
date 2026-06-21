@@ -33,10 +33,13 @@ class Graph;
 class Scheduler;
 } // namespace veng::graph
 
+namespace feng
+{
+class FontAtlas; // text-rendering library: the baked tick-label font atlas (see <feng/FontAtlas.hpp>)
+} // namespace feng
+
 namespace geng
 {
-class FontAtlas;
-
 /// A hard, non-frame error from a @ref Figure operation.
 enum class Error : std::uint8_t
 {
@@ -200,7 +203,7 @@ class Figure
 	std::unique_ptr<veng::graph::Scheduler> m_scheduler;
 	std::unique_ptr<veng::HeadlessExecutor> m_headless; ///< Drives render_png (and embedded readback).
 	std::unique_ptr<veng::graph::Graph>		m_graph;
-	std::unique_ptr<FontAtlas>				m_font;
+	std::unique_ptr<feng::FontAtlas>		m_font;
 
 	veng::graph::DataHandle m_screen;	   ///< source<Extent2D>
 	veng::graph::DataHandle m_view_src;	   ///< source<Bounds2D>

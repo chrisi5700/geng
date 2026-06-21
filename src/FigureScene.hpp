@@ -11,9 +11,11 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <feng/FontAtlas.hpp>
+#include <feng/Text.hpp>	  // feng::Glyph, feng::append_text, feng::TextStyle
+#include <feng/TextGraph.hpp> // feng::add_text_layer
 #include <format>
 #include <geng/Bounds2D.hpp>
-#include <geng/FontAtlas.hpp>
 #include <geng/Series.hpp>
 #include <geng/Theme.hpp>
 #include <glm/common.hpp>
@@ -47,29 +49,6 @@ struct LineUniforms
 	float	  half_width = 0.0F;
 
 	friend bool operator==(const LineUniforms&, const LineUniforms&) noexcept = default;
-};
-
-/// One glyph instance for shaders/text.vert.slang (std430, float4 forces a 16-byte stride).
-struct alignas(16) Glyph
-{
-	glm::vec4 color;
-	glm::vec2 anchor;
-	glm::vec2 min_px;
-	glm::vec2 max_px;
-	glm::vec2 uv0;
-	glm::vec2 uv1;
-
-	friend bool operator==(const Glyph&, const Glyph&) = default;
-};
-static_assert(sizeof(Glyph) == 64, "Glyph must match the std430 StructuredBuffer stride");
-
-/// Matches `PushData` in shaders/text.vert.slang (std430: mat4 @0, vec2 @64).
-struct TextPush
-{
-	glm::mat4 view_proj;
-	glm::vec2 extent;
-
-	friend bool operator==(const TextPush&, const TextPush&) noexcept = default;
 };
 
 /// A resolved series: a data-space polyline plus the concrete color to draw it in.
@@ -193,54 +172,43 @@ inline Segments build_segments(const std::vector<Curve>& curves, const Theme& th
 }
 
 /// Lay out numeric tick labels at the grid positions, anchored in data space and sized in pixels so
-/// they track the plot but stay a constant on-screen size.
-inline std::vector<Glyph> build_glyphs(const Theme& theme, const Bounds2D& box, const FontAtlas& font)
+/// they track the plot but stay a constant on-screen size. The per-string glyph layout is delegated
+/// to feng::append_text; geng only decides which labels go where and how each axis aligns them.
+inline std::vector<feng::Glyph> build_glyphs(const Theme& theme, const Bounds2D& box, const feng::FontAtlas& font)
 {
-	std::vector<Glyph> out;
+	std::vector<feng::Glyph> out;
 	if (!theme.labels.visible)
 	{
 		return out;
 	}
-	const float		scale  = (theme.labels.pixel_height * static_cast<float>(SUPERSAMPLE)) / font.pixel_height();
-	const float		margin = theme.labels.pixel_height * static_cast<float>(SUPERSAMPLE) * 0.35F;
-	const GridTicks ticks  = grid_ticks(box, theme.grid.target_divisions);
-
-	const auto emit_label = [&](std::string_view text, glm::vec2 anchor, bool below)
-	{
-		const std::vector<GlyphQuad> quads = font.layout(text);
-		glm::vec2					 low{1e9F, 1e9F};
-		glm::vec2					 high{-1e9F, -1e9F};
-		for (const GlyphQuad& quad : quads)
-		{
-			low	 = glm::min(low, quad.min_px * scale);
-			high = glm::max(high, quad.max_px * scale);
-		}
-		const glm::vec2 shift = below ? glm::vec2{-(low.x + high.x) * 0.5F, margin - low.y}
-									  : glm::vec2{-high.x - margin, -(low.y + high.y) * 0.5F};
-		std::ranges::transform(quads, std::back_inserter(out),
-							   [&](const GlyphQuad& quad)
-							   {
-								   return Glyph{.color	= theme.labels.color,
-												.anchor = anchor,
-												.min_px = (quad.min_px * scale) + shift,
-												.max_px = (quad.max_px * scale) + shift,
-												.uv0	= quad.uv0,
-												.uv1	= quad.uv1};
-							   });
-	};
+	const float		scale = (theme.labels.pixel_height * static_cast<float>(SUPERSAMPLE)) / font.pixel_height();
+	const float		gap	  = theme.labels.pixel_height * static_cast<float>(SUPERSAMPLE) * 0.35F;
+	const GridTicks ticks = grid_ticks(box, theme.grid.target_divisions);
 
 	for (const float tick_x : ticks.xs)
 	{
 		if (std::abs(tick_x) >= 1e-4F)
 		{
-			emit_label(std::format("{:g}", tick_x), glm::vec2{tick_x, 0.0F}, true);
+			// x labels sit centred just below their tick on the x-axis.
+			feng::append_text(out, font, std::format("{:g}", tick_x), glm::vec2{tick_x, 0.0F},
+							  feng::TextStyle{.color  = theme.labels.color,
+											  .scale  = scale,
+											  .halign = feng::HAlign::CENTER,
+											  .valign = feng::VAlign::TOP,
+											  .gap	  = gap});
 		}
 	}
 	for (const float tick_y : ticks.ys)
 	{
 		if (std::abs(tick_y) >= 1e-4F)
 		{
-			emit_label(std::format("{:g}", tick_y), glm::vec2{0.0F, tick_y}, false);
+			// y labels sit just left of their tick on the y-axis, vertically centred.
+			feng::append_text(out, font, std::format("{:g}", tick_y), glm::vec2{0.0F, tick_y},
+							  feng::TextStyle{.color  = theme.labels.color,
+											  .scale  = scale,
+											  .halign = feng::HAlign::RIGHT,
+											  .valign = feng::VAlign::MIDDLE,
+											  .gap	  = gap});
 		}
 	}
 	return out;
@@ -342,8 +310,8 @@ inline veng::graph::DataHandle wire_scene(veng::graph::Graph&							graph,
 										  veng::graph::TypedHandle<veng::rhi::Extent2D> screen,
 										  veng::graph::TypedHandle<Bounds2D>			view,
 										  veng::graph::TypedHandle<Theme>				theme,
-										  veng::graph::TypedHandle<std::vector<Curve>> curves, const FontAtlas& font,
-										  const Theme& initial)
+										  veng::graph::TypedHandle<std::vector<Curve>>	curves,
+										  const feng::FontAtlas& font, const Theme& initial)
 {
 	using namespace veng;
 	using namespace veng::graph;
@@ -385,30 +353,11 @@ inline veng::graph::DataHandle wire_scene(veng::graph::Graph&							graph,
 		.clear_color({initial.background.r, initial.background.g, initial.background.b, initial.background.a});
 	graph.set_producer(baked_plot, graph.add(std::move(bake)));
 
+	// Tick-label text: geng lays the glyph instances out (build_glyphs) and feng wires the subgraph
+	// that uploads them, samples the atlas, and rasterises a transparent text layer at the bake size.
 	const auto		 glyph_data = graph.add_transform([&font](const Theme& thm, const Bounds2D& bnd)
 													  { return build_glyphs(thm, bnd, font); }, theme, view);
-	const DataHandle glyphs_ref = graph.add(std::make_unique<ValueData<gpu::BufferRef>>(gpu::BufferRef{}));
-	graph.set_producer(glyphs_ref,
-					   graph.add(std::make_unique<nodes::StorageBufferNode>(glyph_data, "glyphs", glyphs_ref)));
-	const auto atlas_src = graph.add_source<gpu::ImageRef>(font.atlas_ref());
-	const auto text_push = graph.add_transform(
-		[](const glm::mat4& proj, const rhi::Extent2D& size)
-		{
-			return TextPush{.view_proj = proj,
-							.extent	   = glm::vec2(static_cast<float>(size.width), static_cast<float>(size.height))};
-		},
-		view_proj, bake_extent);
-
-	const DataHandle text_cache = graph.add(std::make_unique<ValueData<gpu::ImageRef>>(gpu::ImageRef{}));
-	auto text_node = std::make_unique<nodes::GraphicsNode>("text.vert", "text.frag", rhi::Format::RGBA8_UNORM,
-														   rhi::Format::UNDEFINED, 6, bake_extent, text_cache);
-	text_node->add_storage_buffer(glyphs_ref)
-		.add_sampled_image(atlas_src, "atlas")
-		.set_instances_from(glyphs_ref)
-		.push_constant<TextPush>(text_push, rhi::ShaderStage::VERTEX)
-		.clear_color({0.0F, 0.0F, 0.0F, 0.0F})
-		.blend(true);
-	graph.set_producer(text_cache, graph.add(std::move(text_node)));
+	const DataHandle text_cache = feng::add_text_layer(graph, glyph_data, font.atlas_ref(), view_proj, bake_extent);
 
 	const DataHandle scene_image = graph.add(std::make_unique<ValueData<gpu::ImageRef>>(gpu::ImageRef{}));
 	auto display = std::make_unique<nodes::GraphicsNode>("fullscreen.vert", "display.frag", rhi::Format::RGBA8_UNORM,
