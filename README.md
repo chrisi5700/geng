@@ -10,11 +10,11 @@ anywhere: straight to a PNG with no window, into a GLFW window with interactive 
 a Vulkan surface your application already owns (e.g. Qt's `QVulkanWindow`). The core library is
 surface-agnostic; the windowing layer is optional.
 
-https://github.com/chrisi5700/geng/raw/main/media/circle.mp4
+![geng rendering the circle / sine / cosine relationship](media/circle.gif)
 
-> Every frame above is a `Figure` rendered headless to a PNG and stitched into an mp4 — the
-> [`circle_video`](examples/circle_video.cpp) example. Note the round circle: framing is
-> aspect-corrected, so geometry never stretches with the output size.
+> Each frame is a `Figure` rendered headless to a PNG and stitched into the clip above — the
+> [`circle_video`](examples/circle_video.cpp) example ([full-quality mp4](media/circle.mp4)). Note
+> the round circle: framing is aspect-corrected, so geometry never stretches with the output size.
 
 ---
 
