@@ -58,6 +58,8 @@ geng_figure.png
 # Example render artifacts (PNG frame sequences and stitched video)
 circle_frames/
 *.mp4
+# ...but keep the committed showcase clip used by the README
+!media/circle.mp4
 
 # Generated Doxygen API docs
 docs/html/

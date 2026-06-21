@@ -1,147 +1,143 @@
-[![CI](https://github.com/chrisi5700/cmake_start/actions/workflows/ci.yaml/badge.svg)](https://github.com/chrisi5700/cmake_start/actions/workflows/ci.yaml)
-[![Coverage Status](https://coveralls.io/repos/github/chrisi5700/cmake_start/badge.svg?branch=main)](https://coveralls.io/repos/github/chrisi5700/cmake_start?branch=main)
+[![CI](https://github.com/chrisi5700/geng/actions/workflows/ci.yaml/badge.svg)](https://github.com/chrisi5700/geng/actions/workflows/ci.yaml)
+[![Coverage Status](https://coveralls.io/repos/github/chrisi5700/geng/badge.svg?branch=main)](https://coveralls.io/repos/github/chrisi5700/geng?branch=main)
 
-# CMake Starter Template
+# geng
 
-This repository provides a structured C++ project template using **CMake** and **Nix flakes**.  
-It includes benchmarking, testing, and runnable examples of the public API.
+A 2D line-plotting library for modern C++ (C++23), rendered on the GPU through Vulkan.
 
----
+You build a `Figure` — a set of named line series with a view and a theme — and render it
+anywhere: straight to a PNG with no window, into a GLFW window with interactive pan/zoom, or into
+a Vulkan surface your application already owns (e.g. Qt's `QVulkanWindow`). The core library is
+surface-agnostic; the windowing layer is optional.
 
-## Features
+https://github.com/chrisi5700/geng/raw/main/media/circle.mp4
 
-- **CMake-based project structure**
-- **Nix flake** for a reproducible development environment
-- **Google Benchmark** for performance analysis
-- **Catch2** for unit testing
-- **Playground** for isolated code testing
-- **libs/** for external or custom libraries
-
----
-
-## Development with Nix
-
-A **Nix flake** provides a consistent development environment.
-
-```sh
-nix develop
-```
+> Every frame above is a `Figure` rendered headless to a PNG and stitched into an mp4 — the
+> [`circle_video`](examples/circle_video.cpp) example. Note the round circle: framing is
+> aspect-corrected, so geometry never stretches with the output size.
 
 ---
 
-## Building the Project
+## Why geng
 
-```sh
-# Configure the build
-cmake -B build -DCMAKE_BUILD_TYPE=Release
-
-# Build all targets
-cmake --build build
-
-# Run tests
-ctest --test-dir build
-
-# Run benchmarks
-./build/bench/bench
-```
+- **Render anywhere, same figure.** One `Figure` writes a PNG today and drives a live window or an
+  embedded Qt frame tomorrow — the target is chosen per render call, not at construction.
+- **Handle-based series, built for streaming.** Add a series once and get a stable `SeriesId`;
+  `append()` new points or `set_data()` without re-uploading the whole plot. Ideal for live signals.
+- **Only redraws when something changed.** The scene is reactive: `needs_redraw()` lets a host skip
+  frames entirely, and `render_into()` reports `IDLED` when the data, view, and theme are untouched.
+- **Sensible defaults, full control.** Pick a series color or let the theme palette cycle one;
+  `Theme::dark()` / `Theme::light()` out of the box, with grid, axes, tick labels, and per-series
+  width / dash / visibility all themeable.
+- **Pixel-stable styling.** Line widths are specified in screen pixels and stay constant across
+  resizes and zoom.
+- **Interactive view, or automatic.** Pan, zoom-to-cursor, and fit-to-data are one call each;
+  `autoscale(Fit::ALL)` reframes as data arrives and `Fit::FOLLOW_LATEST` keeps a sliding window on
+  the newest points.
+- **No exceptions across the API.** Fallible calls return `std::expected`; the types are move-only
+  and RAII-managed.
 
 ---
 
-## Project Structure & Extension Guide
+## A first plot
 
-### `/src` - Source Libraries
-
-The `src/` directory is where you define CMake libraries for your project. Here are common patterns:
-
-#### Basic Library Definition
-
-```cmake
-target_add_library(MyLib src/mylib.cpp src/mylib.hpp)
-
-target_include_directories(MyLib PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>  # During build
-    $<INSTALL_INTERFACE:include>                            # After installation
-)
-
-target_compile_features(MyLib PUBLIC cxx_std_23)
-```
-
-**Key Concepts:**
-
-- **BUILD_INTERFACE**: Include paths used when building the project itself
-- **INSTALL_INTERFACE**: Include paths used by external projects after installation
-- **PRIVATE/PUBLIC/INTERFACE**: Controls visibility of properties to consuming targets
-
-#### Header-Only Library
-
-For libraries with only headers (templates, inline functions):
-
-```cmake
-target_add_library(HeaderOnlyLib INTERFACE)
-
-target_include_directories(HeaderOnlyLib INTERFACE
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include>
-)
-
-target_compile_features(HeaderOnlyLib INTERFACE cxx_std_23)
-```
-
-#### Setting C++ Standard
-
-Explicitly set the C++ for all presets you can change this line in ``CMakePresets.json`` for the `base` preset:
-
-```json lines
-  "CMAKE_CXX_STANDARD": "23" -> "20" 
-```
-
-
-### `/tests` - Unit Tests
-
-Write tests in the `tests/` directory using **Catch2**:
+Render two series to a PNG — no window, no device setup:
 
 ```cpp
-#include <catch2/catch_test_macros.hpp>
+#include <geng/Figure.hpp>
+#include <glm/vec2.hpp>
+#include <vector>
 
-TEST_CASE("Addition works") {
-    REQUIRE(2 + 2 == 4);
+int main()
+{
+    auto built = geng::Figure::offscreen();      // headless device; std::expected
+    if (!built) return 1;
+    geng::Figure figure = std::move(*built);
+
+    const geng::SeriesId sine = figure.add_line("sin");                       // palette color
+    figure.set_data(sine, /* std::vector<glm::vec2> */ samples);
+
+    const geng::SeriesId ring =
+        figure.add_line("circle", {.color = glm::vec4{0.3F, 0.85F, 0.45F, 1.0F}});
+    figure.set_data(ring, circle_points);
+
+    figure.autoscale(geng::Fit::ALL);            // frame all data, aspect-corrected
+    return figure.render_png(1280, 720, "plot.png") ? 0 : 1;
 }
 ```
 
-Run tests:
-
-```sh
-ctest --test-dir build
-```
-
-See `tests/TestTypes.hpp` for advanced testing utilities for validating C++ semantics.
-
-### `/bench` - Benchmarks
-
-Use **Google Benchmark** for performance analysis:
+Want a window instead? Swap the back end, keep the figure API:
 
 ```cpp
-#include <benchmark/benchmark.h>
+#include <geng/WindowApp.hpp>
 
-static void BM_MyFunction(benchmark::State& state) {
-    for (auto _ : state) {
-        benchmark::DoNotOptimize(MyFunction());
-    }
-}
+auto app = geng::WindowApp::create({.title = "live"});
+if (!app) return 1;
 
-BENCHMARK(BM_MyFunction)->Range(8, 8<<10);
+geng::Figure& figure = app->figure();            // same API as above
+const geng::SeriesId signal = figure.add_line("signal");
+figure.autoscale(geng::Fit::FOLLOW_LATEST);
+
+app->run([&](double seconds) {                   // called once per frame
+    figure.append(signal, next_samples(seconds));
+});
+// scroll to zoom, drag to pan — wired by default via the Interactor
 ```
 
-### `/examples` - Examples
+The full surface lives behind one umbrella header, `#include <geng/geng.hpp>`. See the
+[`examples/`](examples) directory for headless (`figure_png`, `circle_video`) and windowed
+(`growing_sine`, `lissajous`, `live_signals`, `function_explorer`) programs.
 
-The `examples/` directory holds runnable demos of the public API — headless ones
-(render to PNG / a frame sequence) and windowed ones (built behind the
-`geng-glfw` target). Build everything, then run one:
+---
+
+## Using geng in your project
+
+geng builds with CMake and resolves its dependencies through [vcpkg](https://vcpkg.io). The Vulkan
+renderer ([veng](libs/veng)) is a git submodule.
 
 ```sh
-cmake --build build
-# headless: writes a PNG frame sequence, then prints an ffmpeg command to stitch an mp4
-./build/examples/circle_video
-# windowed (needs a display): scroll to zoom, drag to pan
-./build/examples/lissajous
+git clone --recurse-submodules https://github.com/chrisi5700/geng.git
+cd geng
+cmake --preset release-vcpkg
+cmake --build --preset release-vcpkg -j 4
 ```
+
+After `cmake --install`, consume it from another CMake project with `find_package`:
+
+```cmake
+find_package(geng CONFIG REQUIRED)
+
+target_link_libraries(my_app PRIVATE geng::geng)          # core (headless / embedded)
+target_link_libraries(my_app PRIVATE geng::geng-glfw)     # add this only if you want a window
+```
+
+The windowed front end is gated behind the `GENG_BUILD_WINDOW` option (on by default); a purely
+headless or Qt-embedding consumer can leave it off and link only `geng::geng`.
+
+### Requirements
+
+- A C++23 compiler
+- The Vulkan SDK / loader (a GPU with Vulkan support for rendering)
+- CMake ≥ 3.28 and vcpkg
+- Submodules initialized (`git submodule update --init --recursive`)
+
+---
+
+## API at a glance
+
+| Concern        | Entry points |
+| -------------- | ------------ |
+| Create         | `Figure::offscreen()` · `Figure::embedded(host)` · `WindowApp::create(config)` |
+| Series         | `add_line()` → `SeriesId`, then `append()` · `set_data()` · `set_style()` · `remove()` · `clear()` |
+| View           | `pan()` · `zoom()` · `focus()` · `fit_data()` · `autoscale(Fit::ALL \| FOLLOW_LATEST)` |
+| Style          | `set_theme()`, `Theme::dark()` / `Theme::light()`, per-series `LineStyle` (color, `width_px`, `dash`, `visible`) |
+| Render         | `render_png(w, h, path)` · `render_into(target)` · `needs_redraw(w, h)` |
+| Input          | `Interactor` — feed normalized [0,1] gestures; pre-wired to scroll-zoom / drag-pan in `WindowApp` |
+
+All public types live in namespace `geng`.
+
+---
+
+## License
+
+See [LICENSE](LICENSE).
