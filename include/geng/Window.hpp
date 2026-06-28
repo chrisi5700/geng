@@ -1,6 +1,7 @@
 #ifndef GENG_WINDOW_HPP
 #define GENG_WINDOW_HPP
 
+#include <cstdint>
 #include <functional>
 #include <span>
 #include <utility>
@@ -12,6 +13,27 @@ struct GLFWwindow;
 
 namespace geng
 {
+/// The subset of keys the windowed front-end reports, translated from GLFW so an example never has to
+/// include `<GLFW/glfw3.h>`. Anything geng does not name arrives as @ref Key::UNKNOWN.
+enum class Key : std::uint8_t
+{
+	UNKNOWN,
+	UP,
+	DOWN,
+	LEFT,
+	RIGHT,
+	SPACE,
+	ENTER,
+	ESCAPE
+};
+
+/// What happened to a @ref Key this event (GLFW's press / release / auto-repeat).
+enum class KeyAction : std::uint8_t
+{
+	PRESS,
+	RELEASE,
+	REPEAT
+};
 /// A minimal GLFW window for windowed Vulkan rendering: it owns the `GLFWwindow`, reports the
 /// instance extensions a surface needs, and creates a `VkSurfaceKHR` from an instance. The
 /// surface itself is owned by the renderer's veng context, not by this window. (veng ships an
@@ -61,12 +83,16 @@ class Window
 	/// Register a framebuffer-resize handler (new size in pixels; fired during @ref poll).
 	void on_resize(std::function<void(int width, int height)> callback);
 
+	/// Register a key handler (translated @ref Key + @ref KeyAction; fired during @ref poll).
+	void on_key(std::function<void(Key key, KeyAction action)> callback);
+
 	 private:
 	GLFWwindow*							m_window = nullptr;
 	std::vector<const char*>			m_required_extensions;
 	std::function<void(double, double)> m_scroll;
 	std::function<void(double, double)> m_cursor;
 	std::function<void(int, int)>		m_resize;
+	std::function<void(Key, KeyAction)> m_key;
 };
 } // namespace geng
 

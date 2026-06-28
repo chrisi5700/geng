@@ -37,6 +37,9 @@ if(GENG_BUILD_WINDOW)
     target_sources(geng-glfw PRIVATE WindowApp.cpp)
     target_include_directories(geng-glfw PUBLIC $<BUILD_INTERFACE:${geng_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)
     target_compile_features(geng-glfw PUBLIC cxx_std_23)
+    # The corner text overlay (WindowApp::set_overlay_text) falls back to geng's bundled font, found via
+    # GENG_ASSET_DIR (same default + env override as the core library).
+    target_compile_definitions(geng-glfw PRIVATE GENG_ASSET_DIR="${geng_SOURCE_DIR}/assets")
     # Core geng links veng (and glfw, transitively) PUBLIC, so WindowApp.cpp resolves the swapchain /
     # command / context managers and the GLFW-backed geng::Window through this single link.
     target_link_libraries(geng-glfw PUBLIC geng)

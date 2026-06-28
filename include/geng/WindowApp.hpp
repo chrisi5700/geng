@@ -1,6 +1,7 @@
 #ifndef GENG_WINDOWAPP_HPP
 #define GENG_WINDOWAPP_HPP
 
+#include <array>
 #include <cstddef>
 #include <expected>
 #include <functional>
@@ -17,7 +18,14 @@ namespace veng
 class Context;
 class SwapchainManager;
 class CommandManager;
+class ResourcePool;
+class HeadlessExecutor;
 } // namespace veng
+
+namespace feng
+{
+class FontAtlas; // text-rendering library, used for the fixed corner overlay (see set_overlay_text)
+} // namespace feng
 
 namespace geng
 {
@@ -63,6 +71,16 @@ class WindowApp
 	/// disable it here; it is a no-op whenever the figure's @ref Fit mode owns the view.
 	[[nodiscard]] Interactor& interactor() noexcept;
 
+	/// Register a key handler on the window — translated @ref Key + @ref KeyAction, fired during @ref
+	/// run's input poll. Use it to drive the figure from the keyboard (e.g. step a time index).
+	void on_key(std::function<void(Key key, KeyAction action)> callback);
+
+	/// Set a fixed text badge drawn in the top-right corner, in screen space — it never pans or zooms
+	/// with the plot (a HUD label, not plot data; rendered with feng, the text library). Pass an empty
+	/// string to clear it. The badge is re-rendered only on change, then blitted each frame. The first
+	/// call lazily bakes a font; if that fails the overlay is silently skipped.
+	void set_overlay_text(const std::string& text);
+
 	/// Render until the window closes. @p tick, if set, runs once per frame (after input is polled,
 	/// before the frame is drawn) with the seconds elapsed since @ref run began — feed animation here.
 	void run(const std::function<void(double elapsed_seconds)>& tick = {});
@@ -78,6 +96,13 @@ class WindowApp
 	/// loop (a hard device error); an out-of-date swapchain is rebuilt in place and returns true.
 	[[nodiscard]] bool draw_frame(std::size_t counter);
 
+	/// Lazily bake the overlay font and wire its one-node feng graph (called by the first
+	/// @ref set_overlay_text). Returns false — and leaves the overlay disabled — if the font won't load.
+	[[nodiscard]] bool init_overlay();
+	/// Blit the cached overlay badge into the top-right corner of @p swap_image (in @p cmd). No-op when
+	/// no overlay text is set. The swap image must be in TRANSFER_DST (as render_into leaves it).
+	void blit_overlay(VkCommandBuffer cmd_raw, VkImage swap_raw, veng::rhi::Extent2D extent);
+
 	// Held by unique_ptr so their addresses stay stable across a WindowApp move (the input callbacks
 	// and the Interactor capture pointers into these), and so the move is trivial.
 	std::unique_ptr<Window>					m_window;
@@ -86,6 +111,23 @@ class WindowApp
 	std::unique_ptr<veng::CommandManager>	m_commands;
 	std::unique_ptr<Figure>					m_figure;
 	std::unique_ptr<Interactor>				m_interactor;
+
+	// Fixed corner text overlay (feng). Rendered to a small badge image only when the text changes (via
+	// the headless executor, like render_png), then blitted to the corner every frame. All null until
+	// the first set_overlay_text. m_overlay_bg / m_overlay_font_path are captured from the figure config.
+	std::unique_ptr<feng::FontAtlas>		m_overlay_font;
+	std::unique_ptr<veng::ResourcePool>		m_overlay_pool;
+	std::unique_ptr<veng::CommandManager>	m_overlay_commands;
+	std::unique_ptr<veng::graph::Scheduler> m_overlay_scheduler;
+	std::unique_ptr<veng::HeadlessExecutor> m_overlay_headless;
+	std::unique_ptr<veng::graph::Graph>		m_overlay_graph;
+	veng::graph::DataHandle					m_overlay_glyphs_src; ///< source<std::vector<feng::Glyph>>
+	veng::graph::DataHandle					m_overlay_image;	  ///< the baked badge ImageRef
+	std::string								m_overlay_font_path;  ///< resolved bundled/spec font for the badge
+	float									m_overlay_font_height = 96.0F;
+	std::array<float, 4>					m_overlay_bg{0.0F, 0.0F, 0.0F, 1.0F}; ///< opaque badge background (RGBA)
+	bool									m_overlay_ready	 = false; ///< a badge has been baked and can blit
+	bool									m_overlay_failed = false; ///< font load failed; stop retrying
 };
 } // namespace geng
 

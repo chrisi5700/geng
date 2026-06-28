@@ -17,6 +17,32 @@ void on_glfw_error(int code, const char* description) noexcept
 {
 	std::println(stderr, "[geng::Window] GLFW error {}: {}", code, description != nullptr ? description : "(null)");
 }
+
+/// Translate a GLFW key code to geng's small @ref Key vocabulary (unmapped keys become UNKNOWN).
+Key to_key(int glfw_key) noexcept
+{
+	switch (glfw_key)
+	{
+		case GLFW_KEY_UP: return Key::UP;
+		case GLFW_KEY_DOWN: return Key::DOWN;
+		case GLFW_KEY_LEFT: return Key::LEFT;
+		case GLFW_KEY_RIGHT: return Key::RIGHT;
+		case GLFW_KEY_SPACE: return Key::SPACE;
+		case GLFW_KEY_ENTER: return Key::ENTER;
+		case GLFW_KEY_ESCAPE: return Key::ESCAPE;
+		default: return Key::UNKNOWN;
+	}
+}
+
+KeyAction to_key_action(int glfw_action) noexcept
+{
+	switch (glfw_action)
+	{
+		case GLFW_RELEASE: return KeyAction::RELEASE;
+		case GLFW_REPEAT: return KeyAction::REPEAT;
+		default: return KeyAction::PRESS;
+	}
+}
 } // namespace
 
 Window::Window(const char* title, int width, int height)
@@ -69,6 +95,15 @@ Window::Window(const char* title, int width, int height)
 										   self->m_resize(width, height);
 									   }
 								   });
+	glfwSetKeyCallback(m_window,
+					   [](GLFWwindow* win, int key, int /*scancode*/, int action, int /*mods*/)
+					   {
+						   auto* self = static_cast<Window*>(glfwGetWindowUserPointer(win));
+						   if (self != nullptr && self->m_key)
+						   {
+							   self->m_key(to_key(key), to_key_action(action));
+						   }
+					   });
 
 	std::uint32_t	   count	  = 0;
 	const char* const* extensions = glfwGetRequiredInstanceExtensions(&count);
@@ -167,5 +202,10 @@ void Window::on_cursor_pos(std::function<void(double, double)> callback)
 void Window::on_resize(std::function<void(int, int)> callback)
 {
 	m_resize = std::move(callback);
+}
+
+void Window::on_key(std::function<void(Key, KeyAction)> callback)
+{
+	m_key = std::move(callback);
 }
 } // namespace geng
