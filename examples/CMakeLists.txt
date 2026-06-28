@@ -23,6 +23,7 @@ geng_add_headless_example(figure_png)
 geng_add_headless_example(circle_video)
 geng_add_headless_example(mandelbrot)
 geng_add_headless_example(d20_advantage)
+geng_add_headless_example(penguins)
 
 # --- windowed examples (need a surface + the geng-glfw front-end) ---
 if(NOT GENG_BUILD_WINDOW)
@@ -42,3 +43,8 @@ geng_add_example(lissajous)
 geng_add_example(live_signals)
 geng_add_example(function_explorer)
 geng_add_example(scatter_shapes)
+
+# A bar-chart race over World Bank population data in media/. GENG_MEDIA_DIR is the compile-time
+# default path to that data (honours a runtime env override of the same name — see the example).
+geng_add_example(population_bars)
+target_compile_definitions(population_bars PRIVATE GENG_MEDIA_DIR="${geng_SOURCE_DIR}/media")
