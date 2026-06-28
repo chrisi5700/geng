@@ -13,6 +13,7 @@
 #include <span>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 #include <veng/rendergraph/RenderGraphCommon.hpp> // graph::DataHandle (a small POD) for the source members
 #include <veng/rhi/Enums.hpp>					  // rhi::Extent2D / rhi::Format for the target description
@@ -133,12 +134,20 @@ class Figure
 
 	void append(SeriesId series, std::span<const glm::vec2> points); ///< Streaming append; no-op if invalid.
 	void set_data(SeriesId series, std::vector<glm::vec2> points);
+	/// Categorical data: each `(key, value)` becomes a point at `(slot, value)`, where the string key's
+	/// slot is its index in the figure's x-axis category registry (assigned on first sight, shared across
+	/// series, so the same key lines up everywhere). The x-axis then shows the names instead of numbers.
+	void set_data(SeriesId series, const std::vector<std::pair<std::string, float>>& keyed);
 	/// Per-point colors for a scatter or bar series — one entry per point, overriding the series color
 	/// (the path the Mandelbrot example uses). An empty vector clears the override; a length that does
 	/// not match the point count is ignored at sync time and the series color is used instead.
 	void set_point_colors(SeriesId series, std::vector<glm::vec4> colors);
 	void remove(SeriesId series);
 	void clear();
+	/// Reset the x-axis category registry without touching the series. Use it when the category set
+	/// changes wholesale between frames (e.g. a bar-chart race over time), so the next keyed @ref
+	/// set_data numbers its keys from 0 again instead of appending to the accumulated set.
+	void clear_categories();
 
 	void					  set_style(SeriesId series, const LineStyle& style);
 	void					  set_style(SeriesId series, const MarkerStyle& style);
@@ -227,12 +236,15 @@ class Figure
 	std::unordered_map<std::uint64_t, SeriesData> m_series;
 	std::vector<std::uint64_t>					  m_order;		 ///< Creation order, for palette cycling.
 	std::uint64_t								  m_next_id = 1; ///< Monotonic; never recycled.
-	View  m_view{Bounds2D{.min_x = -1.0F, .max_x = 1.0F, .min_y = -1.0F, .max_y = 1.0F}};
-	Theme m_theme;
-	Fit	  m_fit			 = Fit::OFF;
-	float m_follow_width = 0.0F; ///< x-window width frozen when Fit::FOLLOW_LATEST is enabled.
-	bool  m_scene_dirty	 = true;
-	bool  m_equal_aspect = true; ///< Grow the view to the viewport aspect (round circles) vs. fill per axis.
+	/// The x-axis category registry: ordered keys (by first appearance) that keyed set_data resolves
+	/// against. Empty means a numeric x-axis; non-empty switches the x ticks to these names.
+	std::vector<std::string> m_x_categories;
+	View					 m_view{Bounds2D{.min_x = -1.0F, .max_x = 1.0F, .min_y = -1.0F, .max_y = 1.0F}};
+	Theme					 m_theme;
+	Fit						 m_fit			= Fit::OFF;
+	float					 m_follow_width = 0.0F; ///< x-window width frozen when Fit::FOLLOW_LATEST is enabled.
+	bool					 m_scene_dirty	= true;
+	bool m_equal_aspect = true; ///< Grow the view to the viewport aspect (round circles) vs. fill per axis.
 
 	// --- GPU realization (veng-backed; forward-declared, held by pointer — named collaborators) ---
 	std::unique_ptr<veng::Context>			m_ctx; ///< Owned (offscreen) or adopting (embedded).
@@ -249,6 +261,7 @@ class Figure
 	veng::graph::DataHandle m_curves_src;  ///< source<std::vector<Curve>>
 	veng::graph::DataHandle m_markers_src; ///< source<std::vector<MarkerInstance>>
 	veng::graph::DataHandle m_bars_src;	   ///< source<std::vector<BarInstance>>
+	veng::graph::DataHandle m_x_ticks_src; ///< source<AxisTicks> (empty => numeric x-axis)
 	veng::graph::DataHandle m_scene_image; ///< the composited scene the graph produces
 };
 } // namespace geng

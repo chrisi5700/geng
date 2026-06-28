@@ -26,7 +26,9 @@
 #include <memory>
 #include <numeric>
 #include <span>
+#include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 #include <veng/gpu/BufferRef.hpp>
 #include <veng/gpu/ImageRef.hpp>
@@ -41,6 +43,12 @@ namespace geng::detail
 constexpr std::uint32_t SUPERSAMPLE	   = 3;	   ///< Bake at this multiple of the target on each axis (SSAA).
 constexpr float			FALLBACK_WIDTH = 2.0F; ///< Line width when the theme sets none.
 constexpr float			MARGIN_FRAC	   = 0.08F;
+
+// Categorical-x layout. Categories sit at integer x in slots [i-0.5, i+0.5], so the y-axis spine and
+// its labels live at the left boundary of slot 0 (CATEGORY_SPINE_X), with a gutter to their left for
+// the label text — instead of the origin y-axis, which would cut through the first bar.
+constexpr float CATEGORY_SPINE_X = -0.5F; ///< x of the y-axis spine / y-label anchor (left edge of slot 0).
+constexpr float CATEGORY_GUTTER	 = 0.7F;  ///< Width (in slots) of the left gutter that holds the y labels.
 
 /// Matches `PushData` in shaders/line.vert.slang (std430: mat4 @0, vec2 @64, float @72).
 struct LineUniforms
@@ -142,6 +150,19 @@ struct Bars
 	friend bool operator==(const Bars&, const Bars&) = default;
 };
 
+/// An explicit set of axis ticks — a @ref labels string drawn at each @ref positions value (the two
+/// run parallel). This is the locator+formatter seam: when a figure has categorical x data it carries
+/// the category names at 0, 1, 2, …; an empty set means "auto numeric ticks" (the nice_step path).
+struct AxisTicks
+{
+	std::vector<float>		 positions;
+	std::vector<std::string> labels;
+
+	[[nodiscard]] bool empty() const { return positions.empty(); }
+
+	friend bool operator==(const AxisTicks&, const AxisTicks&) = default;
+};
+
 inline float nice_step(float range, int target)
 {
 	if (range <= 0.0F || target <= 0)
@@ -207,18 +228,25 @@ inline void add_segment(Segments& out, glm::vec2 start, glm::vec2 end, const glm
 }
 
 /// Build the whole line-LIST back to front: faint grid, then the brighter axes, then each curve
-/// expanded segment-by-segment on top (later curves win, since there is no depth/blend).
-inline Segments build_segments(const std::vector<Curve>& curves, const Theme& theme, const Bounds2D& box)
+/// expanded segment-by-segment on top (later curves win, since there is no depth/blend). When @p x_cat
+/// is a categorical axis the vertical gridlines are dropped (they would run up through the bars) and the
+/// y-axis spine moves to the left edge of the view instead of through the category at x=0.
+inline Segments build_segments(const std::vector<Curve>& curves, const Theme& theme, const Bounds2D& box,
+							   const AxisTicks& x_cat)
 {
 	Segments		out;
-	const GridTicks ticks = grid_ticks(box, theme.grid.target_divisions);
+	const bool		categorical = !x_cat.empty();
+	const GridTicks ticks		= grid_ticks(box, theme.grid.target_divisions);
 	if (theme.grid.visible)
 	{
-		for (const float tick_x : ticks.xs)
+		if (!categorical)
 		{
-			if (std::abs(tick_x) >= 1e-4F)
+			for (const float tick_x : ticks.xs)
 			{
-				add_segment(out, {tick_x, box.min_y}, {tick_x, box.max_y}, theme.grid.color);
+				if (std::abs(tick_x) >= 1e-4F)
+				{
+					add_segment(out, {tick_x, box.min_y}, {tick_x, box.max_y}, theme.grid.color);
+				}
 			}
 		}
 		for (const float tick_y : ticks.ys)
@@ -231,8 +259,10 @@ inline Segments build_segments(const std::vector<Curve>& curves, const Theme& th
 	}
 	if (theme.axes.visible)
 	{
+		// Categorical: a left spine at the first slot's edge instead of an origin y-axis through a bar.
+		const float y_axis_x = categorical ? CATEGORY_SPINE_X : 0.0F;
 		add_segment(out, {box.min_x, 0.0F}, {box.max_x, 0.0F}, theme.axes.color);
-		add_segment(out, {0.0F, box.min_y}, {0.0F, box.max_y}, theme.axes.color);
+		add_segment(out, {y_axis_x, box.min_y}, {y_axis_x, box.max_y}, theme.axes.color);
 	}
 	for (const Curve& curve : curves)
 	{
@@ -244,10 +274,13 @@ inline Segments build_segments(const std::vector<Curve>& curves, const Theme& th
 	return out;
 }
 
-/// Lay out numeric tick labels at the grid positions, anchored in data space and sized in pixels so
-/// they track the plot but stay a constant on-screen size. The per-string glyph layout is delegated
-/// to feng::append_text; geng only decides which labels go where and how each axis aligns them.
-inline std::vector<feng::Glyph> build_glyphs(const Theme& theme, const Bounds2D& box, const feng::FontAtlas& font)
+/// Lay out the tick labels, anchored in data space and sized in pixels so they track the plot but stay
+/// a constant on-screen size. The per-string glyph layout is delegated to feng::append_text; geng only
+/// decides which labels go where and how each axis aligns them. A categorical x-axis (@p x_cat) draws
+/// the category names under each bar instead of numeric ticks (every position, including 0); a numeric
+/// axis keeps the nice_step ticks. The y-axis is always numeric here.
+inline std::vector<feng::Glyph> build_glyphs(const Theme& theme, const Bounds2D& box, const feng::FontAtlas& font,
+											 const AxisTicks& x_cat)
 {
 	std::vector<feng::Glyph> out;
 	if (!theme.labels.visible)
@@ -258,25 +291,39 @@ inline std::vector<feng::Glyph> build_glyphs(const Theme& theme, const Bounds2D&
 	const float		gap	  = theme.labels.pixel_height * static_cast<float>(SUPERSAMPLE) * 0.35F;
 	const GridTicks ticks = grid_ticks(box, theme.grid.target_divisions);
 
-	for (const float tick_x : ticks.xs)
+	const feng::TextStyle x_style{.color  = theme.labels.color,
+								  .scale  = scale,
+								  .halign = feng::HAlign::CENTER,
+								  .valign = feng::VAlign::TOP,
+								  .gap	  = gap};
+	if (x_cat.empty())
 	{
-		if (std::abs(tick_x) >= 1e-4F)
+		for (const float tick_x : ticks.xs)
 		{
-			// x labels sit centred just below their tick on the x-axis.
-			feng::append_text(out, font, std::format("{:g}", tick_x), glm::vec2{tick_x, 0.0F},
-							  feng::TextStyle{.color  = theme.labels.color,
-											  .scale  = scale,
-											  .halign = feng::HAlign::CENTER,
-											  .valign = feng::VAlign::TOP,
-											  .gap	  = gap});
+			if (std::abs(tick_x) >= 1e-4F)
+			{
+				// Numeric x labels sit centred just below their tick on the x-axis.
+				feng::append_text(out, font, std::format("{:g}", tick_x), glm::vec2{tick_x, 0.0F}, x_style);
+			}
 		}
 	}
+	else
+	{
+		// Categorical: a name under every bar (no origin suppression — a key can live at x=0).
+		for (std::size_t idx = 0; idx < x_cat.positions.size(); ++idx)
+		{
+			feng::append_text(out, font, x_cat.labels.at(idx), glm::vec2{x_cat.positions.at(idx), 0.0F}, x_style);
+		}
+	}
+
+	// Numeric y labels sit just left of the y-axis: at the origin normally, or in the left gutter (left
+	// of the first category slot) when x is categorical, so they never land on the first bar.
+	const float y_label_x = x_cat.empty() ? 0.0F : CATEGORY_SPINE_X;
 	for (const float tick_y : ticks.ys)
 	{
 		if (std::abs(tick_y) >= 1e-4F)
 		{
-			// y labels sit just left of their tick on the y-axis, vertically centred.
-			feng::append_text(out, font, std::format("{:g}", tick_y), glm::vec2{0.0F, tick_y},
+			feng::append_text(out, font, std::format("{:g}", tick_y), glm::vec2{y_label_x, tick_y},
 							  feng::TextStyle{.color  = theme.labels.color,
 											  .scale  = scale,
 											  .halign = feng::HAlign::RIGHT,
@@ -418,6 +465,45 @@ inline std::vector<glm::vec2> bar_extent_points(const std::vector<glm::vec2>& ba
 	return out;
 }
 
+/// Map categorical `(key, value)` data to `(x, value)` points against an ordered category @p registry,
+/// appending any unseen key (so a key keeps the same slot across calls and across series — matplotlib's
+/// first-appearance ordering, via its accumulated UnitData). The registry is the x-axis identity set;
+/// the resolved x is the key's index in it. Mutates @p registry; this is the only place keys become
+/// coordinates, so the rest of the pipeline stays in R².
+inline std::vector<glm::vec2> resolve_keyed(std::vector<std::string>&						  registry,
+											const std::vector<std::pair<std::string, float>>& keyed)
+{
+	std::vector<glm::vec2> points;
+	points.reserve(keyed.size());
+	for (const auto& [key, value] : keyed)
+	{
+		const auto found = std::ranges::find(registry, key);
+		const auto index =
+			(found == registry.end()) ? registry.size() : static_cast<std::size_t>(found - registry.begin());
+		if (found == registry.end())
+		{
+			registry.push_back(key);
+		}
+		points.emplace_back(static_cast<float>(index), value);
+	}
+	return points;
+}
+
+/// The x-axis ticks for a categorical registry: the i-th key gets a tick at x = i labelled with its
+/// name. An empty registry yields empty ticks (the axis stays numeric).
+inline AxisTicks category_ticks(const std::vector<std::string>& categories)
+{
+	AxisTicks ticks;
+	ticks.positions.reserve(categories.size());
+	ticks.labels.reserve(categories.size());
+	for (std::size_t idx = 0; idx < categories.size(); ++idx)
+	{
+		ticks.positions.push_back(static_cast<float>(idx));
+		ticks.labels.push_back(categories[idx]);
+	}
+	return ticks;
+}
+
 /// Axis-aligned bounds of every span of points, padded by a small margin (a unit box if empty).
 inline Bounds2D bounds_of(std::span<const std::span<const glm::vec2>> series_points)
 {
@@ -497,14 +583,16 @@ inline veng::graph::DataHandle wire_scene(
 	veng::graph::Graph& graph, veng::graph::TypedHandle<veng::rhi::Extent2D> screen,
 	veng::graph::TypedHandle<Bounds2D> view, veng::graph::TypedHandle<Theme> theme,
 	veng::graph::TypedHandle<std::vector<Curve>> curves, veng::graph::TypedHandle<std::vector<MarkerInstance>> markers,
-	veng::graph::TypedHandle<std::vector<BarInstance>> bars, const feng::FontAtlas& font, const Theme& initial)
+	veng::graph::TypedHandle<std::vector<BarInstance>> bars, veng::graph::TypedHandle<AxisTicks> x_ticks,
+	const feng::FontAtlas& font, const Theme& initial)
 {
 	using namespace veng;
 	using namespace veng::graph;
 
 	const auto view_proj  = graph.add_transform([](const Bounds2D& bnd) { return ortho_view(bnd); }, view);
-	const auto segments	  = graph.add_transform([](const std::vector<Curve>& crv, const Theme& thm, const Bounds2D& bnd)
-												{ return build_segments(crv, thm, bnd); }, curves, theme, view);
+	const auto segments	  = graph.add_transform([](const std::vector<Curve>& crv, const Theme& thm, const Bounds2D& bnd,
+												   const AxisTicks& xt) { return build_segments(crv, thm, bnd, xt); },
+												curves, theme, view, x_ticks);
 	const auto positions  = graph.add_transform([](const Segments& seg) { return seg.positions; }, segments);
 	const auto seg_colors = graph.add_transform([](const Segments& seg) { return seg.colors; }, segments);
 
@@ -584,8 +672,8 @@ inline veng::graph::DataHandle wire_scene(
 
 	// Tick-label text: geng lays the glyph instances out (build_glyphs) and feng wires the subgraph
 	// that uploads them, samples the atlas, and rasterises a transparent text layer at the bake size.
-	const auto		 glyph_data = graph.add_transform([&font](const Theme& thm, const Bounds2D& bnd)
-													  { return build_glyphs(thm, bnd, font); }, theme, view);
+	const auto glyph_data = graph.add_transform([&font](const Theme& thm, const Bounds2D& bnd, const AxisTicks& xt)
+												{ return build_glyphs(thm, bnd, font, xt); }, theme, view, x_ticks);
 	const DataHandle text_cache = feng::add_text_layer(graph, glyph_data, font.atlas_ref(), view_proj, bake_extent);
 
 	// Composite the supersampled layers back to front and resolve onto the screen: opaque plot, then the

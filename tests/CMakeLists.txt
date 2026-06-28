@@ -26,3 +26,8 @@ target_include_directories(scatter_test PRIVATE ${geng_SOURCE_DIR}/src)
 add_test_executable(bar_test BarTests.cpp)
 target_link_libraries(bar_test PRIVATE geng)
 target_include_directories(bar_test PRIVATE ${geng_SOURCE_DIR}/src)
+
+# Categorical axis CPU side (resolve_keyed / category_ticks). Same white-box setup.
+add_test_executable(categorical_test CategoricalTests.cpp)
+target_link_libraries(categorical_test PRIVATE geng)
+target_include_directories(categorical_test PRIVATE ${geng_SOURCE_DIR}/src)

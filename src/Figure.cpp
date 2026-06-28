@@ -124,6 +124,7 @@ std::expected<Figure, Error> Figure::build(std::unique_ptr<veng::Context> ctx, c
 	const auto curves_src  = graph.add_source<std::vector<detail::Curve>>({});
 	const auto markers_src = graph.add_source<std::vector<detail::MarkerInstance>>({});
 	const auto bars_src	   = graph.add_source<std::vector<detail::BarInstance>>({});
+	const auto x_ticks_src = graph.add_source<detail::AxisTicks>({});
 
 	fig.m_screen	  = screen.handle;
 	fig.m_view_src	  = view_src.handle;
@@ -131,8 +132,9 @@ std::expected<Figure, Error> Figure::build(std::unique_ptr<veng::Context> ctx, c
 	fig.m_curves_src  = curves_src.handle;
 	fig.m_markers_src = markers_src.handle;
 	fig.m_bars_src	  = bars_src.handle;
+	fig.m_x_ticks_src = x_ticks_src.handle;
 	fig.m_scene_image = detail::wire_scene(graph, screen, view_src, theme_src, curves_src, markers_src, bars_src,
-										   *fig.m_font, desc.theme);
+										   x_ticks_src, *fig.m_font, desc.theme);
 	return fig;
 }
 
@@ -204,6 +206,17 @@ void Figure::set_data(SeriesId series, std::vector<glm::vec2> points)
 	}
 }
 
+void Figure::set_data(SeriesId series, const std::vector<std::pair<std::string, float>>& keyed)
+{
+	if (auto it = m_series.find(series.value()); it != m_series.end())
+	{
+		// resolve_keyed maps each key to its slot in the shared x-axis registry (growing it for new
+		// keys), so the geometry below this line is plain (x, value) points again.
+		it->second.points = detail::resolve_keyed(m_x_categories, keyed);
+		m_scene_dirty	  = true;
+	}
+}
+
 void Figure::set_point_colors(SeriesId series, std::vector<glm::vec4> colors)
 {
 	if (auto it = m_series.find(series.value()); it != m_series.end())
@@ -226,6 +239,13 @@ void Figure::clear()
 {
 	m_series.clear();
 	m_order.clear();
+	m_x_categories.clear(); // forget the category registry too — a fresh axis
+	m_scene_dirty = true;
+}
+
+void Figure::clear_categories()
+{
+	m_x_categories.clear();
 	m_scene_dirty = true;
 }
 
@@ -306,7 +326,16 @@ Bounds2D Figure::data_bounds() const noexcept
 			spans.emplace_back(data.points);
 		}
 	}
-	return detail::bounds_of(spans);
+	Bounds2D bounds = detail::bounds_of(spans);
+	if (!m_x_categories.empty())
+	{
+		// Categorical x: frame the N category slots [-0.5, N-0.5] plus a left gutter for the y-axis
+		// labels (keep the data-derived y range from bounds_of, including its baseline padding).
+		const auto count = static_cast<float>(m_x_categories.size());
+		bounds.min_x	 = detail::CATEGORY_SPINE_X - detail::CATEGORY_GUTTER;
+		bounds.max_x	 = (count - 0.5F) + 0.1F;
+	}
+	return bounds;
 }
 
 Bounds2D Figure::follow_bounds() const
@@ -434,6 +463,7 @@ void Figure::sync_scene()
 	m_graph->set(TypedHandle<std::vector<detail::Curve>>{m_curves_src}, std::move(curves));
 	m_graph->set(TypedHandle<std::vector<detail::MarkerInstance>>{m_markers_src}, detail::build_markers(scatters));
 	m_graph->set(TypedHandle<std::vector<detail::BarInstance>>{m_bars_src}, detail::build_bars(bars));
+	m_graph->set(TypedHandle<detail::AxisTicks>{m_x_ticks_src}, detail::category_ticks(m_x_categories));
 	m_graph->set(TypedHandle<Theme>{m_theme_src}, m_theme);
 	m_scene_dirty = false;
 }
